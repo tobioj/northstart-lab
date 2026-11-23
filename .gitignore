@@ -1,0 +1,11 @@
+node_modules/
+dist/
+evidence/
+configuration/deploy.env
+deployment/generated/
+*.local.env
+.env
+.env.*
+.vercel/
+.netlify/
+.wrangler/

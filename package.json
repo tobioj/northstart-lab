@@ -1,0 +1,20 @@
+{
+  "name": "northstar-lab",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Northstar Lab: isolated, portable web-testing environment (12 neutral hostnames).",
+  "type": "module",
+  "engines": { "node": ">=22" },
+  "scripts": {
+    "build": "node scripts/build.js",
+    "start": "node scripts/serve.js --env-file configuration/local.env",
+    "harness": "node tests/harness/serve-harness.js",
+    "test": "node scripts/build.js && node --test --test-concurrency=1 \"tests/*.test.js\"",
+    "evidence": "node scripts/evidence.js",
+    "plan": "node scripts/plan.js",
+    "prepare-deploy": "node scripts/prepare-deploy.js",
+    "verify-deployment": "node scripts/verify-deployment.js"
+  },
+  "dependencies": {},
+  "devDependencies": {}
+}

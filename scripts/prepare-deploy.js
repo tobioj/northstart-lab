@@ -1,0 +1,80 @@
+// Assemble a ready-to-deploy folder for one platform. DOES NOT DEPLOY.
+//   npm run prepare-deploy -- vercel|netlify|cloudflare|node [--env-file configuration/deploy.env] [--name northstar-lab]
+// Output: dist/<platform>/ plus printed, copy-pasteable next steps.
+import { cpSync, mkdirSync, rmSync, writeFileSync, existsSync } from 'node:fs';
+import { join, dirname } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { parseArgs } from 'node:util';
+import { build } from './build.js';
+import { readEnvFile } from './lib/env.js';
+
+const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
+const { values: a, positionals } = parseArgs({
+  allowPositionals: true,
+  options: { 'env-file': { type: 'string', default: 'configuration/deploy.env' }, name: { type: 'string', default: 'northstar-lab' } },
+});
+const platform = (positionals[0] || '').toLowerCase();
+if (!['vercel', 'netlify', 'cloudflare', 'node'].includes(platform)) {
+  console.error('Usage: npm run prepare-deploy -- vercel|netlify|cloudflare|node'); process.exit(1);
+}
+const envPath = join(ROOT, a['env-file']);
+if (!existsSync(envPath)) { console.error(`${a['env-file']} not found. Run: npm run plan -- --root-domain <ROOT_DOMAIN> first.`); process.exit(1); }
+const env = readEnvFile(envPath);
+const publicVars = Object.entries(env).filter(([k]) => k.startsWith('NORTHSTAR_') && !/SECRET|TOKEN|PASSWORD|PRIVATE/i.test(k));
+
+const buildInfo = build({ quiet: true });
+const out = join(ROOT, 'dist', platform);
+rmSync(out, { recursive: true, force: true });
+mkdirSync(out, { recursive: true });
+const copy = (from, to) => cpSync(join(ROOT, from), join(out, to), { recursive: true });
+
+// Shared core (identical for every platform).
+copy('functions', 'functions');
+rmSync(join(out, 'functions', 'node-adapter.js'));
+mkdirSync(join(out, 'configuration'), { recursive: true });
+copy('configuration/config.js', 'configuration/config.js');
+writeFileSync(join(out, 'package.json'), JSON.stringify({ name: a.name, private: true, type: 'module' }, null, 2) + '\n');
+
+const steps = [];
+if (platform === 'vercel') {
+  copy('deployment/adapters/vercel/api', 'api');
+  copy('deployment/adapters/vercel/vercel.json', 'vercel.json');
+  mkdirSync(join(out, 'public'));
+  writeFileSync(join(out, 'public', 'robots.txt'), 'User-agent: *\nDisallow: /\n');
+  steps.push(`cd dist/vercel`, `vercel link            # select/create the project "${a.name}"`,
+    ...publicVars.map(([k, v]) => `vercel env add ${k} production   # value: ${v === '' ? '(leave empty)' : v}`),
+    ...publicVars.filter(([k]) => /_HOST$/.test(k)).map(([, v]) => `vercel domains add ${v}`),
+    `vercel deploy --prod   # ONLY after external deployment is approved`);
+} else if (platform === 'netlify') {
+  copy('deployment/adapters/netlify/netlify', 'netlify');
+  copy('deployment/adapters/netlify/netlify.toml', 'netlify.toml');
+  mkdirSync(join(out, 'public'));
+  writeFileSync(join(out, 'public', 'robots.txt'), 'User-agent: *\nDisallow: /\n');
+  steps.push(`cd dist/netlify`, `netlify link   # or: netlify sites:create --name ${a.name}`,
+    ...publicVars.map(([k, v]) => `netlify env:set ${k} "${v}"`),
+    'Add each NORTHSTAR_*_HOST as a domain alias: Site configuration > Domain management > Add domain alias',
+    'netlify deploy --prod   # ONLY after external deployment is approved');
+} else if (platform === 'cloudflare') {
+  copy('deployment/adapters/cloudflare/worker.js', 'worker.js');
+  const hosts = publicVars.filter(([k]) => /_HOST$/.test(k)).map(([, v]) => v).filter(Boolean);
+  const toml = [`name = "${a.name}"`, 'main = "worker.js"', 'compatibility_date = "2026-11-01"', 'workers_dev = false', '',
+    'routes = [', ...hosts.map((h) => `  { pattern = "${h}", custom_domain = true },`), ']', '', '[vars]',
+    ...publicVars.map(([k, v]) => `${k} = ${JSON.stringify(v)}`)].join('\n') + '\n';
+  writeFileSync(join(out, 'wrangler.toml'), toml);
+  steps.push('cd dist/cloudflare', 'npx wrangler login', 'npx wrangler deploy --dry-run   # validates, uploads nothing',
+    'npx wrangler deploy             # ONLY after external deployment is approved (creates the 12 custom domains)');
+} else {
+  copy('functions/node-adapter.js', 'functions/node-adapter.js');
+  mkdirSync(join(out, 'scripts', 'lib'), { recursive: true });
+  for (const f of ['serve.js', 'build.js', 'lib/env.js']) copy(`scripts/${f}`, `scripts/${f}`);
+  copy('pages', 'pages');
+  copy('configuration/lanes.internal.json', 'configuration/lanes.internal.json');
+  copy('deployment/adapters/node/Dockerfile', 'Dockerfile');
+  steps.push('cd dist/node', 'docker build -t northstar-lab .',
+    `docker run -p 8787:8787 ${publicVars.map(([k]) => `-e ${k}`).join(' ')} northstar-lab`,
+    'Put a TLS-terminating proxy (platform load balancer, Caddy, nginx) in front for the 12 hostnames.');
+}
+
+writeFileSync(join(out, 'NORTHSTAR-BUILD.txt'), `build=${buildInfo.id}\nsourceSha=${buildInfo.sourceSha}\nplatform=${platform}\n`);
+console.log(`Prepared dist/${platform} (build ${buildInfo.id}). Nothing has been deployed.\n\nNext steps:`);
+for (const s of steps) console.log(`  ${s}`);

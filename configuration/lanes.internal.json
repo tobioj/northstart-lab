@@ -1,0 +1,132 @@
+{
+  "_comment": "INTERNAL ONLY. Maps neutral lanes to their internal assignment and fixture characteristics. Fixture markers mirror the application's ChallengeSignature registry (src/challenges/signatures). Assignment names are stripped from the deployable bundle by scripts/build.js.",
+  "lanes": {
+    "control": {
+      "label": "northstar-control",
+      "hostVariable": "NORTHSTAR_CONTROL_HOST",
+      "assignment": "control",
+      "setupType": "baseline",
+      "fixture": { "status": 200, "headers": {}, "scripts": [], "frames": [] }
+    },
+    "lane-01": {
+      "label": "northstar-01",
+      "hostVariable": "NORTHSTAR_LANE_01_HOST",
+      "assignment": "cloudflare",
+      "setupType": "real_integration",
+      "edge": "cloudflare",
+      "fixture": { "status": 200, "headers": {}, "scripts": [], "frames": [] }
+    },
+    "lane-02": {
+      "label": "northstar-02",
+      "hostVariable": "NORTHSTAR_LANE_02_HOST",
+      "assignment": "datadome",
+      "setupType": "controlled_fixture",
+      "fixture": {
+        "status": 403,
+        "headers": { "x-datadome": "protected", "x-dd-b": "1" },
+        "scripts": ["/fx/captcha-delivery.com/c.js"],
+        "frames": ["/fx/captcha-delivery.com/captcha/?initialcid=northstar-fixture"]
+      }
+    },
+    "lane-03": {
+      "label": "northstar-03",
+      "hostVariable": "NORTHSTAR_LANE_03_HOST",
+      "assignment": "aws_waf",
+      "setupType": "controlled_fixture",
+      "fixture": {
+        "status": 202,
+        "headers": { "x-amzn-waf-action": "challenge" },
+        "scripts": ["/fx/awswaf.com/challenge.js"],
+        "frames": ["/fx/awswaf.com/captcha/"]
+      }
+    },
+    "lane-04": {
+      "label": "northstar-04",
+      "hostVariable": "NORTHSTAR_LANE_04_HOST",
+      "assignment": "perimeterx",
+      "setupType": "controlled_fixture",
+      "fixture": {
+        "status": 403,
+        "headers": {},
+        "scripts": ["/fx/captcha.px-cloud.net/captcha.js"],
+        "frames": ["/fx/px-cloud.net/challenge/"]
+      }
+    },
+    "lane-05": {
+      "label": "northstar-05",
+      "hostVariable": "NORTHSTAR_LANE_05_HOST",
+      "assignment": "akamai",
+      "setupType": "controlled_fixture",
+      "fixture": {
+        "status": 403,
+        "headers": { "server": "akamaighost", "akamai-grn": "0.northstar.fixture" },
+        "scripts": ["/_sec/cp_challenge/fixture.js"],
+        "frames": []
+      }
+    },
+    "lane-06": {
+      "label": "northstar-06",
+      "hostVariable": "NORTHSTAR_LANE_06_HOST",
+      "assignment": "kasada",
+      "setupType": "controlled_fixture",
+      "fixture": {
+        "status": 429,
+        "headers": { "x-kpsdk-ct": "northstar-fixture", "x-kpsdk-cd": "northstar-fixture" },
+        "scripts": ["/fx/kpsdk/ips.js"],
+        "frames": []
+      }
+    },
+    "lane-07": {
+      "label": "northstar-07",
+      "hostVariable": "NORTHSTAR_LANE_07_HOST",
+      "assignment": "imperva",
+      "setupType": "controlled_fixture",
+      "fixture": {
+        "status": 403,
+        "headers": { "x-iinfo": "northstar-fixture" },
+        "scripts": ["/_incapsula_resource?swjiylwa=northstar"],
+        "frames": ["/_incapsula_resource/frame/"]
+      }
+    },
+    "lane-08": {
+      "label": "northstar-08",
+      "hostVariable": "NORTHSTAR_LANE_08_HOST",
+      "assignment": "arkose",
+      "setupType": "controlled_fixture",
+      "fixture": {
+        "status": 200,
+        "headers": {},
+        "scripts": ["/fx/arkoselabs.com/v2/api.js"],
+        "frames": ["/fx/arkoselabs.com/fc/gc/"]
+      }
+    },
+    "lane-09": {
+      "label": "northstar-09",
+      "hostVariable": "NORTHSTAR_LANE_09_HOST",
+      "assignment": "geetest",
+      "setupType": "controlled_fixture",
+      "fixture": {
+        "status": 200,
+        "headers": {},
+        "scripts": ["/fx/gcaptcha4.geetest.com/load.js"],
+        "frames": ["/fx/geetest.com/captcha/"]
+      }
+    },
+    "lane-10": {
+      "label": "northstar-10",
+      "hostVariable": "NORTHSTAR_LANE_10_HOST",
+      "assignment": "hcaptcha",
+      "setupType": "real_integration",
+      "widget": { "kind": "hcaptcha", "siteKeyVariable": "NORTHSTAR_HCAPTCHA_SITE_KEY" },
+      "fixture": { "status": 200, "headers": {}, "scripts": [], "frames": [] }
+    },
+    "lane-11": {
+      "label": "northstar-11",
+      "hostVariable": "NORTHSTAR_LANE_11_HOST",
+      "assignment": "recaptcha",
+      "setupType": "real_integration",
+      "widget": { "kind": "recaptcha", "siteKeyVariable": "NORTHSTAR_RECAPTCHA_SITE_KEY" },
+      "fixture": { "status": 200, "headers": {}, "scripts": [], "frames": [] }
+    }
+  }
+}

@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow">
+<title>{{TITLE}}</title>
+<link rel="stylesheet" href="/assets/site.css">
+<script src="/assets/page.js" defer></script>
+{{HEAD}}
+</head>
+<body>
+<main>
+  <h1>{{TITLE}}</h1>
+  <p class="summary">{{SUMMARY}}</p>
+  <dl class="facts">
+    <div><dt>Build</dt><dd>{{BUILD}}</dd></div>
+    <div><dt>Environment</dt><dd>{{ENVIRONMENT}}</dd></div>
+    <div><dt>Page status</dt><dd id="page-status" role="status" aria-live="polite">Loading</dd></div>
+  </dl>
+  <p class="actions"><button type="button" id="reload-button">Reload</button> <a href="{{CONTROL_URL}}">Back to control page</a></p>
+{{BODY}}
+</main>
+</body>
+</html>
