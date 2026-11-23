@@ -131,6 +131,7 @@
         "headers": {},
         "resources": ["fx/hcaptcha.com/1/api.js"],
         "frames": ["fx/hcaptcha.com/captcha/checkbox/"],
+        "frameSize": [303, 78],
         "images": []
       }
     },
@@ -145,6 +146,7 @@
         "headers": {},
         "resources": ["fx/recaptcha/api.js"],
         "frames": ["fx/recaptcha/api2/anchor"],
+        "frameSize": [304, 78],
         "images": []
       }
     },

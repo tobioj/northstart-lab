@@ -26,10 +26,14 @@ export function startFailingGateway({ status = 502, port = 0 } = {}) {
   const extra = status === 407 ? 'Proxy-Authenticate: Basic realm="northstar-fixture"\r\n' : '';
   const server = http.createServer((req, res) => {
     seen.push({ method: req.method, target: String(req.url).slice(0, 200), status });
-    res.writeHead(status, { 'content-type': 'text/plain', connection: 'close', ...(status === 407 ? { 'proxy-authenticate': 'Basic realm="northstar-fixture"' } : {}) });
-    res.end(`${reason}\n`);
+    // Empty body: Chromium then shows its own error document ("HTTP ERROR <status>") at
+    // chrome-error://chromewebdata/ instead of rendering a hosted page.
+    res.writeHead(status, { 'content-length': '0', connection: 'close', ...(status === 407 ? { 'proxy-authenticate': 'Basic realm="northstar-fixture"' } : {}) });
+    res.end();
   });
+  server.on('clientError', (err, socket) => socket.destroy());
   server.on('connect', (req, socket) => {
+    socket.on('error', () => {}); // the browser may reset the tunnel socket first
     seen.push({ method: 'CONNECT', target: String(req.url).slice(0, 200), status });
     socket.end(`HTTP/1.1 ${status} ${reason}\r\n${extra}Content-Length: 0\r\nConnection: close\r\n\r\n`);
   });

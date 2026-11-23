@@ -30,7 +30,10 @@ button {
 }
 a { color: var(--accent); }
 button:focus-visible, a:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
-iframe { display: block; width: 100%; max-width: 22rem; height: 5rem; margin-top: 1rem; border: 1px solid var(--line); }
+iframe { display: block; margin-top: 1rem; }
+iframe:not([width]) { width: 100%; max-width: 22rem; height: 5rem; border: 1px solid var(--line); }
+/* Frames with explicit width/height attributes keep exactly that box (fixtures mirror the real widget size). */
+iframe[width][height] { border: 0; }
 .widget { margin-top: 1.5rem; }
 body.frame { display: grid; place-items: center; min-height: 100vh; }
 body.frame p { margin: 0; color: var(--muted); font-size: .9rem; }

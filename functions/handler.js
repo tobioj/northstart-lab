@@ -91,6 +91,7 @@ function laneUrls(config, laneId, token, { realWidget }) {
     scripts: lane.fixture.resources.map((p) => base('resources') + p),
     frames: lane.fixture.frames.map((p) => base('widget') + p),
     images: lane.fixture.images.map((p) => base('images') + p),
+    frameSize: lane.fixture.frameSize || null,
   };
 }
 
@@ -142,7 +143,7 @@ async function parentRoute(ctx) {
     const lane = LANES[laneId];
     const realWidget = config.realWidgets && lane.widget ? { kind: lane.widget.kind, siteKey: config.siteKeys[laneId] } : null;
     const widgetUrls = laneUrls(config, laneId, parts[2], { realWidget });
-    const usesWidget = Object.values(widgetUrls).some((l) => l.length);
+    const usesWidget = ['scripts', 'frames', 'images'].some((k) => (widgetUrls[k] || []).length);
     const html = renderParentPage({
       ...common,
       page: PAGES[laneId],

@@ -83,6 +83,9 @@ export function validateLaneDefinitions(lanes) {
     if (lane.code && !CODE_RE.test(lane.code)) errors.push(`lane ${laneId}: code must be two digits`);
     const f = lane.fixture;
     if (!f || !Number.isInteger(f.status)) { errors.push(`lane ${laneId}: fixture.status missing`); continue; }
+    if (f.frameSize !== undefined && !(Array.isArray(f.frameSize) && f.frameSize.length === 2 && f.frameSize.every((n) => Number.isInteger(n) && n > 0 && n <= 2000))) {
+      errors.push(`lane ${laneId}: fixture.frameSize must be [width, height] in CSS pixels`);
+    }
     for (const kind of ['resources', 'frames', 'images']) {
       if (!Array.isArray(f[kind])) { errors.push(`lane ${laneId}: fixture.${kind} must be a list`); continue; }
       for (const p of f[kind]) {

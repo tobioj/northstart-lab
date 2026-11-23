@@ -21,22 +21,22 @@ All three point at the **same** hosting project. The handler routes by the incom
 
 Every lane uses the same verification routes (`/api/input|verify|settle|status/{token}` on the verify origin) and the same continuation page (`/continue/{token}` on the parent origin). Evidence paths are relative to `evidence/`.
 
-| Code | Lane | Parent route | Widget routes (resource / frame / image) | `/` status | Signature at origin | Evidence |
+| Code | Lane | Parent route | Widget routes (resource / frame / image) | `/` status | Classifier verdict at origin | Evidence |
 |---|---|---|---|---|---|---|
 | 00 | Clean control | `/scenario/clean-control/{token}` | none | 200 | none | `screenshots/control.png` |
-| 01 | Cloudflare | `/scenario/cloudflare/{token}` | none | 200, or 403 + `cf-mitigated` at the edge | none at origin; Cloudflare WAF adds it | `screenshots/lane-01.png`, `deployment-verification.json` |
-| 02 | DataDome | `/scenario/datadome/{token}` | `fx/captcha-delivery.com/c.js` · `fx/captcha-delivery.com/captcha/?initialcid=…` | 403 | `x-datadome`, `x-dd-b`, url, frame | `screenshots/lane-02.png` |
-| 03 | AWS WAF (challenge) | `/scenario/aws-waf/{token}` | `fx/awswaf.com/challenge.js` · `fx/awswaf.com/captcha/` | 202 | `x-amzn-waf-action: challenge`, url, frame | `screenshots/lane-03.png` |
-| 12 | AWS WAF (CAPTCHA) | `/scenario/aws-waf-captcha/{token}` | `fx/captcha.awswaf.com/jsapi.js` · `fx/awswaf.com/captcha/puzzle/` | 405 | `x-amzn-waf-action: captcha`, url, frame | `screenshots/lane-12.png` |
-| 04 | PerimeterX | `/scenario/perimeterx/{token}` | `fx/captcha.px-cloud.net/captcha.js` · `fx/px-cloud.net/challenge/` | 403 | url, frame | `screenshots/lane-04.png` |
-| 05 | Akamai | `/scenario/akamai/{token}` | `_sec/cp_challenge/fixture.js` | 403 | `server: akamaighost`, `akamai-grn`, url | `screenshots/lane-05.png` |
-| 06 | Kasada | `/scenario/kasada/{token}` | `fx/kpsdk/ips.js` | 429 | `x-kpsdk-ct`, `x-kpsdk-cd`, url | `screenshots/lane-06.png` |
-| 07 | Imperva | `/scenario/imperva/{token}` | `_incapsula_resource?swjiylwa=northstar` · `_incapsula_resource/frame/` | 403 | `x-iinfo`, url, frame | `screenshots/lane-07.png` |
-| 08 | Arkose | `/scenario/arkose/{token}` | `fx/arkoselabs.com/v2/api.js` · `fx/arkoselabs.com/fc/gc/` | 200 | url, frame | `screenshots/lane-08.png` |
-| 09 | GeeTest | `/scenario/geetest/{token}` | `fx/gcaptcha4.geetest.com/load.js` · `fx/geetest.com/captcha/` · image `fx/geetest.com/bg.svg` | 200 | url, frame | `screenshots/lane-09.png` |
-| 10 | hCaptcha | `/scenario/hcaptcha/{token}` | `fx/hcaptcha.com/1/api.js` · `fx/hcaptcha.com/captcha/checkbox/` | 200 | url, frame | `screenshots/lane-10.png` |
-| 11 | reCAPTCHA | `/scenario/recaptcha/{token}` | `fx/recaptcha/api.js` · `fx/recaptcha/api2/anchor` | 200 | url, frame | `screenshots/lane-11.png` |
-| 13 | YouTube account gate | `/scenario/youtube-account-gate/{token}` | none | 200 | special condition (page text) | `screenshots/lane-13.png` |
+| 01 | Cloudflare | `/scenario/cloudflare/{token}` | none | 200, or 403 + `cf-mitigated` at the edge | none at origin; `CLOUDFLARE / JS_POW_AUTO` once the WAF adds `cf-mitigated` | `screenshots/lane-01.png`, `deployment-verification.json` |
+| 02 | DataDome | `/scenario/datadome/{token}` | `fx/captcha-delivery.com/c.js` · `fx/captcha-delivery.com/captcha/?initialcid=…` | 403 | `DATADOME / VISUAL_PUZZLE` (header, url, frame) | `screenshots/lane-02.png` |
+| 03 | AWS WAF (challenge) | `/scenario/aws-waf/{token}` | `fx/awswaf.com/challenge.js` · `fx/awswaf.com/captcha/` | 202 | `AWS_WAF / JS_POW_AUTO` (header, url, frame) | `screenshots/lane-03.png` |
+| 12 | AWS WAF (CAPTCHA) | `/scenario/aws-waf-captcha/{token}` | `fx/captcha.awswaf.com/jsapi.js` · `fx/awswaf.com/captcha/puzzle/` | 405 | `AWS_WAF / VISUAL_PUZZLE` (`x-amzn-waf-action: captcha`) | `screenshots/lane-12.png` |
+| 04 | PerimeterX | `/scenario/perimeterx/{token}` | `fx/captcha.px-cloud.net/captcha.js` · `fx/px-cloud.net/challenge/` | 403 | `PERIMETERX / PRESS_AND_HOLD` (url, frame) | `screenshots/lane-04.png` |
+| 05 | Akamai | `/scenario/akamai/{token}` | `_sec/cp_challenge/fixture.js` | 403 | `AKAMAI / HARD_BLOCK` (header, url) | `screenshots/lane-05.png` |
+| 06 | Kasada | `/scenario/kasada/{token}` | `fx/kpsdk/ips.js` | 429 | `KASADA / JS_POW_AUTO` (header, url) | `screenshots/lane-06.png` |
+| 07 | Imperva | `/scenario/imperva/{token}` | `_incapsula_resource?swjiylwa=northstar` · `_incapsula_resource/frame/` | 403 | `IMPERVA / JS_POW_AUTO` (header, url, frame) | `screenshots/lane-07.png` |
+| 08 | Arkose | `/scenario/arkose/{token}` | `fx/arkoselabs.com/v2/api.js` · `fx/arkoselabs.com/fc/gc/` | 200 | `ARKOSE / VISUAL_PUZZLE` (url, frame) | `screenshots/lane-08.png` |
+| 09 | GeeTest | `/scenario/geetest/{token}` | `fx/gcaptcha4.geetest.com/load.js` · `fx/geetest.com/captcha/` · image `fx/geetest.com/bg.svg` | 200 | `GEETEST / VISUAL_PUZZLE` (url, frame) | `screenshots/lane-09.png` |
+| 10 | hCaptcha | `/scenario/hcaptcha/{token}` | `fx/hcaptcha.com/1/api.js` · `fx/hcaptcha.com/captcha/checkbox/` | 200 | `HCAPTCHA / WIDGET_CHECKBOX` (url, frame; 303×78 frame) | `screenshots/lane-10.png` |
+| 11 | reCAPTCHA | `/scenario/recaptcha/{token}` | `fx/recaptcha/api.js` · `fx/recaptcha/api2/anchor` | 200 | `RECAPTCHA / WIDGET_CHECKBOX` (url, frame; 304×78 anchor, so not the passive badge) | `screenshots/lane-11.png` |
+| 13 | YouTube account gate | `/scenario/youtube-account-gate/{token}` | none | 200 | `YOUTUBE_BOT_GATE / ACCOUNT_MATURATION_GATE` (page text) | `screenshots/lane-13.png` |
 
 Widget paths are served as `/resources/{lane}/{token}/{path}`, `/widget/{lane}/{token}/{path}` and `/images/{lane}/{token}/{path}` on the widget origin. The provider-looking strings appear **only** in those owned paths. No request ever goes to a provider domain.
 
@@ -46,9 +46,19 @@ Per-run evidence: `route-isolation.json`, `signal-isolation.json`, `request-capt
 
 | Condition | Kind | Where |
 |---|---|---|
-| Google `/sorry/` | Protocol-level fixture only: the URL `https://www.google.com/sorry/index?…`, status 429 and body text a classifier receives. No owned page imitates it, and no browser visits it. | `tests/harness/special-fixtures.json` |
-| Proxy gateway 407 / 502 (+ unreachable) | Browser-transport fixture: a loopback gateway fails the CONNECT, and Chromium shows `chrome-error://chromewebdata/` (`ERR_HTTP_RESPONSE_CODE_FAILURE` with a `Proxy` auth challenge, `ERR_TUNNEL_CONNECTION_FAILED`, `ERR_PROXY_CONNECTION_FAILED`). Never a hosted HTTP error page. | `tests/harness/special-fixtures.js`, evidence `request-capture.json` |
+| Google `/sorry/` | Protocol-level fixture only: the URL `https://www.google.com/sorry/index?…`, status 429 and body text. The classifier returns `GOOGLE_SORRY / RATE_LIMIT`. No owned page imitates it, and no browser visits it. | `tests/harness/special-fixtures.json` |
+| Proxy gateway (4 variants) | Browser-transport fixtures: a loopback gateway fails the request and Chromium shows its own error document at `chrome-error://chromewebdata/`. Never a hosted HTTP error page. **407** (HTTPS CONNECT): page text "HTTP ERROR 407", so `PROXY_GATEWAY / PROXY_GATEWAY_ERROR`. **http_502** (plain HTTP, empty-body 502): "HTTP ERROR 502", same verdict. **tunnel_502** (HTTPS CONNECT 502): `ERR_TUNNEL_CONNECTION_FAILED`, so no `classify()` verdict, only `proxy_transport_marker`. **Unreachable**: `ERR_PROXY_CONNECTION_FAILED`, likewise marker only. | `tests/harness/special-fixtures.json`, evidence `request-capture.json` |
 | YouTube account gate | Controlled browser route | `/scenario/youtube-account-gate/{token}` |
+
+## Classifier alignment
+
+Verdicts above come from `tests/reference-classifier.js`, a port of the application's `classifier.py`, `signatures.py` and `proxy_transport_marker`. Inputs are built the way the app sees a page:
+- every response of the navigation (redirects included), with header names and values lowercased;
+- the document response;
+- child frames with their CSS boxes;
+- the visible page text.
+
+Every lane also matches **exactly one** signature, checked by a diagnostic that ignores the classifier's first-match-wins order, so a leak cannot hide behind ordering.
 
 ## Isolation: paths are not origins
 

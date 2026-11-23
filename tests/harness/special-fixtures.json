@@ -7,14 +7,22 @@
     "headers": {
       "content-type": "text/html; charset=UTF-8"
     },
-    "text": "Our systems have detected unusual traffic from your computer network."
+    "text": "Our systems have detected unusual traffic from your computer network.",
+    "expectedVerdict": [
+      "GOOGLE_SORRY",
+      "RATE_LIMIT"
+    ]
   },
   "youtubeGate": {
     "mode": "browser-route",
     "lane": "lane-13",
     "route": "youtube-account-gate",
     "status": 200,
-    "text": "Sign in to confirm you're not a bot"
+    "text": "Sign in to confirm you're not a bot",
+    "expectedVerdict": [
+      "YOUTUBE_BOT_GATE",
+      "ACCOUNT_MATURATION_GATE"
+    ]
   },
   "proxyGateway": {
     "mode": "browser-transport",
@@ -23,32 +31,61 @@
     "variants": {
       "proxy_auth_407": {
         "gatewayStatus": 407,
-        "description": "Local gateway answers every CONNECT with 407 Proxy Authentication Required (no credentials are ever supplied)",
+        "probeUrl": "https://northstar-proxy-probe.invalid/",
+        "description": "HTTPS through a gateway that answers every CONNECT with 407 Proxy Authentication Required (credentials are never supplied). Chromium shows \"HTTP ERROR 407\".",
         "expectedBrowserErrors": [
-          "net::ERR_HTTP_RESPONSE_CODE_FAILURE",
-          "net::ERR_INVALID_AUTH_CREDENTIALS"
+          "net::ERR_HTTP_RESPONSE_CODE_FAILURE"
         ],
+        "expectedErrorText": "HTTP ERROR 407",
         "expectedAuthChallenge": {
           "source": "Proxy",
           "scheme": "basic",
           "realm": "northstar-fixture"
-        }
+        },
+        "expectedVerdict": [
+          "PROXY_GATEWAY",
+          "PROXY_GATEWAY_ERROR"
+        ],
+        "expectedMarker": "proxy_gateway_407"
+      },
+      "http_502": {
+        "gatewayStatus": 502,
+        "probeUrl": "http://northstar-proxy-probe.invalid/",
+        "description": "Plain HTTP through a gateway that answers 502 with an empty body. Chromium shows \"HTTP ERROR 502\".",
+        "expectedBrowserErrors": [
+          "net::ERR_HTTP_RESPONSE_CODE_FAILURE"
+        ],
+        "expectedErrorText": "HTTP ERROR 502",
+        "expectedVerdict": [
+          "PROXY_GATEWAY",
+          "PROXY_GATEWAY_ERROR"
+        ],
+        "expectedMarker": null,
+        "expectedMarkerWithIplock502": "proxy_gateway_iplock_502"
       },
       "tunnel_502": {
         "gatewayStatus": 502,
-        "description": "Local gateway answers every request and CONNECT with 502 Bad Gateway",
+        "probeUrl": "https://northstar-proxy-probe.invalid/",
+        "description": "HTTPS through a gateway that answers CONNECT with 502. Chromium reports a tunnel failure, NOT \"HTTP ERROR 502\".",
         "expectedBrowserErrors": [
           "net::ERR_TUNNEL_CONNECTION_FAILED"
-        ]
+        ],
+        "expectedErrorText": "ERR_TUNNEL_CONNECTION_FAILED",
+        "expectedVerdict": null,
+        "expectedMarker": "proxy_gateway_407"
       },
       "proxy_unreachable": {
         "gatewayStatus": null,
-        "description": "Browser is pointed at a loopback proxy port with nothing listening",
+        "probeUrl": "https://northstar-proxy-probe.invalid/",
+        "description": "Browser is pointed at a loopback proxy port with nothing listening.",
         "expectedBrowserErrors": [
           "net::ERR_PROXY_CONNECTION_FAILED"
-        ]
+        ],
+        "expectedErrorText": "ERR_PROXY_CONNECTION_FAILED",
+        "expectedVerdict": null,
+        "expectedMarker": "proxy_gateway_407"
       }
     },
-    "note": "Chromium itself opens background CONNECTs (observed: www.google.com:443) inside a proxied context. They reach only the loopback gateway, which never forwards anything, and are recorded in the gateway log as evidence."
+    "note": "expectedVerdict is what ChallengeClassifier.classify(url=chrome-error://chromewebdata/, page_text=<error page text>) returns; expectedMarker is proxy_transport_marker(url, page_text, error_text). Chromium also opens its own background CONNECTs (observed: www.google.com:443) inside a proxied context; they reach only the loopback gateway, which never forwards anything."
   }
 }

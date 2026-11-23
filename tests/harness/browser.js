@@ -110,7 +110,11 @@ async function snapshot(s) {
       localStorage: (() => { try { return Object.assign({}, localStorage); } catch (e) { return {}; } })(),
       sessionStorage: (() => { try { return Object.assign({}, sessionStorage); } catch (e) { return {}; } })(),
       documentCookie: (() => { try { return document.cookie; } catch (e) { return ''; } })(),
-      iframeSrcs: [...document.querySelectorAll('iframe')].map((f) => f.src)
+      iframeSrcs: [...document.querySelectorAll('iframe')].map((f) => f.src),
+      iframeEvidence: [...document.querySelectorAll('iframe')].map((f) => {
+        const r = f.getBoundingClientRect(); const cs = getComputedStyle(f);
+        return { url: f.src, box: [r.x, r.y, r.width, r.height], visible: r.width > 0 && r.height > 0 && cs.visibility !== 'hidden' && cs.display !== 'none' };
+      })
     })`,
   });
   const snap = JSON.parse(result.value);
@@ -163,6 +167,9 @@ export async function visit(browser, url, { proxyServer, proxyAllow = () => fals
       // Record the challenge as evidence; credentials are never supplied.
       rec.authChallenges.push({ source: p.authChallenge.source, scheme: p.authChallenge.scheme, realm: p.authChallenge.realm, url: p.request.url });
       try { await s('Fetch.continueWithAuth', { requestId: p.requestId, authChallengeResponse: { response: 'CancelAuth' } }); } catch { /* closing */ }
+    } else if (msg.method === 'Network.requestWillBeSent' && p.redirectResponse) {
+      // Redirect responses (e.g. the 303 that issues a token) are responses the app's tap also sees.
+      rec.responses.push({ url: p.redirectResponse.url, status: p.redirectResponse.status, headers: p.redirectResponse.headers, type: p.type, frameId: p.frameId, redirect: true });
     } else if (msg.method === 'Network.responseReceived') {
       rec.responses.push({ url: p.response.url, status: p.response.status, headers: p.response.headers, type: p.type, frameId: p.frameId });
     } else if (msg.method === 'Page.loadEventFired') onLoad();
@@ -178,7 +185,7 @@ export async function visit(browser, url, { proxyServer, proxyAllow = () => fals
   else { await Promise.race([loaded, delay(10000)]); await delay(settleMs); }
 
   const mainDoc = (after = 0) => {
-    const doc = rec.responses.slice(after).filter((r) => r.type === 'Document' && r.frameId === nav.frameId).pop();
+    const doc = rec.responses.slice(after).filter((r) => r.type === 'Document' && r.frameId === nav.frameId && !r.redirect).pop();
     return doc ? { url: doc.url, status: doc.status, headers: lowerHeaders(doc.headers) } : null;
   };
   rec.document = mainDoc();
@@ -196,6 +203,9 @@ export async function visit(browser, url, { proxyServer, proxyAllow = () => fals
       tree = ((await cdp.send('Page.getFrameTree', {}, sessionId).catch(() => ({}))) || {}).frameTree || null;
     }
     rec.errorPage = tree ? { url: tree.frame.url, unreachableUrl: tree.frame.unreachableUrl || null } : null;
+    // The text Chromium shows on its error document (e.g. "HTTP ERROR 407").
+    const ev = await cdp.send('Runtime.evaluate', { expression: 'document.body ? document.body.innerText : ""', returnByValue: true }, sessionId).catch(() => null);
+    if (rec.errorPage) rec.errorPage.text = ev?.result?.value || '';
   }
 
   const shoot = async (path) => {
@@ -219,7 +229,8 @@ export async function visit(browser, url, { proxyServer, proxyAllow = () => fals
     await Promise.race([loaded, delay(10000)]);
     await delay(settleMs);
     const snap = await snapshot(s);
-    rec.continuation = { ...snap, requests: rec.requests.slice(reqIdx), document: mainDoc(resIdx) };
+    rec.continuation = { ...snap, requests: rec.requests.slice(reqIdx), responses: rec.responses.slice(resIdx), document: mainDoc(resIdx) };
+    rec.scenarioResponseCount = resIdx;
   }
 
   if (screenshotPath && complete && !rec.navigationError) await shoot(screenshotPath.replace(/\.png$/, '-continue.png'));

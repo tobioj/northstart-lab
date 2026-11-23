@@ -1,13 +1,13 @@
 // Shared harness used by tests and evidence: starts the Northstar server on loopback for the
 // three role origins, drives a real headless browser through all 14 lanes (scenario page, then
 // "Complete scenario" -> verification origin -> continuation page) and the proxy transport
-// fixtures, and returns structured observations.
+// fixtures, and classifies each with the JS port of the application's ChallengeClassifier.
 import { readFileSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import net from 'node:net';
 import { startServer } from '../../functions/node-adapter.js';
 import { readEnvFile } from '../../scripts/lib/env.js';
-import { matchObservation } from '../reference-matcher.js';
+import { classify, allMatchingVendors, responseSignal, proxyTransportMarker } from '../reference-classifier.js';
 import { launchBrowser, visit } from './browser.js';
 import { SPECIAL, startFailingGateway, findClosedPort } from './special-fixtures.js';
 
@@ -23,6 +23,36 @@ export const SECRET_SENTINELS = {
   NORTHSTAR_RECAPTCHA_SECRET: 'NORTHSTAR-SENTINEL-RECAPTCHA-SECRET-0001',
   NORTHSTAR_PROVIDER_API_KEY: 'NORTHSTAR-SENTINEL-API-KEY-0002',
 };
+
+/**
+ * The verdict ChallengeClassifier.classify must return for each lane at the origin:
+ * [vendor, surface], or null for "no challenge". The Cloudflare lane is clean until its
+ * edge rule is on (then CLOUDFLARE / JS_POW_AUTO from cf-mitigated).
+ */
+export const EXPECTED_VERDICTS = {
+  control: null,
+  'lane-01': null,
+  'lane-02': ['DATADOME', 'VISUAL_PUZZLE'],
+  'lane-03': ['AWS_WAF', 'JS_POW_AUTO'],
+  'lane-04': ['PERIMETERX', 'PRESS_AND_HOLD'],
+  'lane-05': ['AKAMAI', 'HARD_BLOCK'],
+  'lane-06': ['KASADA', 'JS_POW_AUTO'],
+  'lane-07': ['IMPERVA', 'JS_POW_AUTO'],
+  'lane-08': ['ARKOSE', 'VISUAL_PUZZLE'],
+  'lane-09': ['GEETEST', 'VISUAL_PUZZLE'],
+  'lane-10': ['HCAPTCHA', 'WIDGET_CHECKBOX'],
+  'lane-11': ['RECAPTCHA', 'WIDGET_CHECKBOX'],
+  'lane-12': ['AWS_WAF', 'VISUAL_PUZZLE'],
+  'lane-13': ['YOUTUBE_BOT_GATE', 'ACCOUNT_MATURATION_GATE'],
+};
+
+/** Registry signatures a lane may match at the origin (exactly one, or none). */
+export function expectedVendors(laneId) {
+  const v = EXPECTED_VERDICTS[laneId];
+  return v && v[0] !== 'YOUTUBE_BOT_GATE' ? [v[0]] : [];
+}
+
+export const verdictPair = (v) => (v && v.challenge ? [v.vendor, v.surface] : null);
 
 /** Local env with origins rewritten to the given port. */
 export function localEnv(extra = {}, port = 8787) {
@@ -51,13 +81,6 @@ export async function startLab({ extra = {}, onEvidence, now } = {}) {
   return { server, port, env, logs, origins, hosts, store, close: () => new Promise((r) => server.close(r)) };
 }
 
-/** Registry vendor a lane must trigger at the origin ([] for clean control, the Cloudflare lane before its edge rule, and the YouTube gate). */
-export function expectedVendors(laneId) {
-  const l = INTERNAL_LANES[laneId];
-  const a = l.registryVendor || l.assignment;
-  return ['control', 'cloudflare', 'youtube_account_gate'].includes(a) ? [] : [a];
-}
-
 /** Which role origin served a URL, or null when it is not one of the lab origins. */
 export function roleOf(url, hosts) {
   let h;
@@ -71,19 +94,29 @@ export const ROLE_PATHS = {
   verify: [/^\/api\/(input|verify|settle|status)\//],
 };
 
-export function observationOf(rec, { urls } = {}) {
+/**
+ * Build ChallengeClassifier.classify inputs from a browser record, the way the application's
+ * ChallengeNetworkTap + CDP inspector would see the page: every response of this navigation
+ * (local security-software injections excluded), the document response, child frames with
+ * their CSS boxes, and the visible page text.
+ */
+export function classifierInput(snap, responses, injected = []) {
+  const events = responses.filter((r) => !injected.includes(r.url)).map((r) => responseSignal({ url: r.url, status: r.status, headers: r.headers, resourceType: r.type }));
   return {
-    status: rec.document?.status,
-    headers: rec.document?.headers || {},
-    urls: (urls || rec.requests).filter((u) => !rec.environmentInjected.includes(u)),
-    frames: rec.frameUrls || [],
+    url: snap.location,
+    response: snap.document ? responseSignal(snap.document) : null,
+    networkEvents: events,
+    frames: snap.iframeEvidence || [],
+    pageText: snap.text,
   };
 }
 
 export async function runBrowserSuite({ screenshotsDir = null, log = () => {} } = {}) {
   const evidence = [];
   const lab = await startLab({ extra: SECRET_SENTINELS, onEvidence: (e) => evidence.push(e) });
-  const gateways = { proxy_auth_407: await startFailingGateway({ status: 407 }), tunnel_502: await startFailingGateway({ status: 502 }) };
+  const variants = SPECIAL.proxyGateway.variants;
+  const gateways = {};
+  for (const [name, v] of Object.entries(variants)) if (v.gatewayStatus) gateways[name] = await startFailingGateway({ status: v.gatewayStatus });
   const closedPort = await findClosedPort();
   const browser = await launchBrowser();
   if (screenshotsDir) mkdirSync(screenshotsDir, { recursive: true });
@@ -94,33 +127,37 @@ export async function runBrowserSuite({ screenshotsDir = null, log = () => {} } 
       const url = `${lab.origins.parent}/scenario/${lane.route}`;
       log(`visiting ${laneId} (${lane.route})`);
       const rec = await visit(browser, url, { complete: true, screenshotPath: shot(laneId) });
-      const scenarioRequests = rec.continuation ? rec.requests.slice(0, rec.requests.length - rec.continuation.requests.length) : rec.requests;
-      const observation = observationOf(rec, { urls: scenarioRequests });
+      const injected = rec.environmentInjected;
+      const scenario = { ...rec, document: rec.document };
+      const input = classifierInput(scenario, rec.responses.slice(0, rec.scenarioResponseCount ?? rec.responses.length), injected);
       const cont = rec.continuation;
-      const continuationObservation = cont ? {
-        status: cont.document?.status,
-        headers: cont.document?.headers || {},
-        urls: cont.requests.filter((u) => !rec.environmentInjected.includes(u)),
-        frames: cont.frameUrls || [],
-      } : null;
+      const continuationInput = cont ? classifierInput(cont, cont.responses, injected) : null;
       results.lanes[laneId] = {
-        url, rec, observation, hits: matchObservation(observation),
-        continuationObservation, continuationHits: continuationObservation ? matchObservation(continuationObservation) : null,
+        url, rec, input,
+        verdict: classify(input),
+        vendors: allMatchingVendors(input),
+        continuationInput,
+        continuationVerdict: continuationInput ? classify(continuationInput) : null,
+        continuationVendors: continuationInput ? allMatchingVendors(continuationInput) : null,
       };
     }
 
     // Proxy transport fixtures: only the probe URL may use the (local, always-failing) gateway.
-    const probe = SPECIAL.proxyGateway.probeUrl;
-    const proxyAllow = (u) => u.startsWith(probe);
     results.special.proxyGateway = {};
-    for (const [variant, gw] of Object.entries(gateways)) {
+    for (const [variant, v] of Object.entries(variants)) {
       log(`visiting proxy ${variant}`);
-      const rec = await visit(browser, probe, { proxyServer: `http://127.0.0.1:${gw.port}`, proxyAllow, screenshotPath: shot(`special-proxy-${variant}`) });
-      results.special.proxyGateway[variant] = { rec, gatewayLog: [...gw.seen] };
+      const gw = gateways[variant];
+      const port = gw ? gw.port : closedPort;
+      const rec = await visit(browser, v.probeUrl, { proxyServer: `http://127.0.0.1:${port}`, proxyAllow: (u) => u.startsWith(v.probeUrl), screenshotPath: shot(`special-proxy-${variant}`) });
+      const pageText = rec.errorPage?.text || '';
+      const url = rec.errorPage?.url || '';
+      results.special.proxyGateway[variant] = {
+        rec, gatewayLog: gw ? [...gw.seen] : [],
+        verdict: classify({ url, pageText }),
+        marker: proxyTransportMarker({ url, pageText, errorText: rec.navigationError || '' }),
+        markerWithIplock502: proxyTransportMarker({ url, pageText, errorText: rec.navigationError || '', allowIplock502: true }),
+      };
     }
-    log('visiting proxy proxy_unreachable');
-    const unreachable = await visit(browser, probe, { proxyServer: `http://127.0.0.1:${closedPort}`, proxyAllow, screenshotPath: shot('special-proxy-proxy_unreachable') });
-    results.special.proxyGateway.proxy_unreachable = { rec: unreachable, gatewayLog: [] };
   } finally {
     await browser.close();
     await lab.close();

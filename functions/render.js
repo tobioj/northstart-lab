@@ -99,7 +99,7 @@ export function contentSecurityPolicy(kind, { origins, usesWidget = false, usesV
  * @param {{id: string}} o.build
  * @param {string} o.environment
  * @param {string} o.controlUrl
- * @param {{scripts?: string[], frames?: string[], images?: string[]}} [o.widgetUrls]  absolute widget-origin URLs
+ * @param {{scripts?: string[], frames?: string[], images?: string[], frameSize?: number[]}} [o.widgetUrls]  absolute widget-origin URLs; frameSize = exact [w, h] of the frames
  * @param {{kind: string, siteKey: string}} [o.realWidget]
  * @param {{verifyOrigin: string, token: string, continueUrl: string}} [o.scenario]
  */
@@ -107,7 +107,8 @@ export function renderParentPage({ templates, page, build, environment, controlU
   const head = [];
   const body = [];
   for (const src of widgetUrls.scripts || []) head.push(`<script src="${escapeHtml(src)}" defer></script>`);
-  for (const src of widgetUrls.frames || []) body.push(`  <iframe src="${escapeHtml(src)}" title="Fixture frame" loading="eager"></iframe>`);
+  const size = widgetUrls.frameSize ? ` width="${Number(widgetUrls.frameSize[0])}" height="${Number(widgetUrls.frameSize[1])}"` : '';
+  for (const src of widgetUrls.frames || []) body.push(`  <iframe src="${escapeHtml(src)}" title="Fixture frame" loading="eager"${size}></iframe>`);
   for (const src of widgetUrls.images || []) body.push(`  <img src="${escapeHtml(src)}" alt="" width="40" height="40">`);
   const widget = realWidget && WIDGETS[realWidget.kind];
   if (widget) {

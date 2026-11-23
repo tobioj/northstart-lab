@@ -5,7 +5,8 @@ import net from 'node:net';
 import { readFileSync } from 'node:fs';
 import { withLab, request } from './helpers.js';
 import { SPECIAL, googleSorryObservation, startFailingGateway, findClosedPort } from './harness/special-fixtures.js';
-import { classifySpecial } from './reference-special.js';
+import { classify, proxyTransportMarker, responseSignal } from './reference-classifier.js';
+import { verdictPair } from './harness/suite.js';
 import { INTERNAL_LANES } from './harness/suite.js';
 
 const connect = (port, target) => new Promise((resolve, reject) => {
@@ -24,7 +25,9 @@ test('Google /sorry/ is a protocol-level fixture: Google hostname, /sorry/index,
   assert.equal(u.pathname, '/sorry/index');
   assert.equal(obs.status, 429);
   assert.ok(obs.text.includes('unusual traffic'));
-  assert.deepEqual(classifySpecial(obs), [{ kind: 'google_sorry', statusMatch: true }]);
+  const v = classify({ url: obs.url, response: responseSignal(obs), pageText: obs.text });
+  assert.deepEqual(verdictPair(v), SPECIAL.googleRateLimit.expectedVerdict);
+  assert.equal(v.attribution, 'TRANSIENT_THROTTLE');
 });
 
 test('Google /sorry/ is never served by an owned page or visited by the browser harness', async () => {
@@ -37,7 +40,7 @@ test('Google /sorry/ is never served by an owned page or visited by the browser 
   const browserTest = readFileSync(new URL('./browser.test.js', import.meta.url), 'utf8');
   for (const src of [harness, browserTest]) assert.ok(!/visit\([^)]*google/i.test(src) && !src.includes('SPECIAL.googleRateLimit.url'), 'browser visits Google fixture');
   // An owned path named /sorry/index would not be equivalent: the classifier needs the Google host.
-  assert.deepEqual(classifySpecial({ url: 'https://northstar-parent.example.com/sorry/index', status: 429 }), []);
+  assert.equal(classify({ url: 'https://northstar-parent.example.com/sorry/index' }).challenge, false);
 });
 
 test('proxy 407 gateway: CONNECT gets 407 with a Basic proxy challenge, recorded as evidence', async () => {
@@ -50,11 +53,13 @@ test('proxy 407 gateway: CONNECT gets 407 with a Basic proxy challenge, recorded
   } finally { gw.server.close(); }
 });
 
-test('proxy 502 gateway: CONNECT and plain requests get 502; a closed port refuses', async () => {
+test('proxy 502 gateway: CONNECT and plain requests get 502 with an empty body; a closed port refuses', async () => {
   const gw = await startFailingGateway({ status: 502 });
   try {
     assert.match(await connect(gw.port, 'northstar-proxy-probe.invalid:443'), /^HTTP\/1\.1 502/);
-    assert.equal((await request({ port: gw.port, host: 'northstar-proxy-probe.invalid', path: '/' })).status, 502);
+    const plain = await request({ port: gw.port, host: 'northstar-proxy-probe.invalid', path: '/' });
+    assert.equal(plain.status, 502);
+    assert.equal(plain.body, '', 'empty body so Chromium shows its own HTTP ERROR 502 document');
   } finally { gw.server.close(); }
   const closed = await findClosedPort();
   await assert.rejects(new Promise((resolve, reject) => {
@@ -67,7 +72,11 @@ test('proxy fixtures are transport fixtures, not hosted HTTP error pages', async
   for (const v of Object.values(SPECIAL.proxyGateway.variants)) assert.ok(v.expectedBrowserErrors.every((e) => e.startsWith('net::ERR_')));
   assert.equal(SPECIAL.proxyGateway.errorPageUrl, 'chrome-error://chromewebdata/');
   // A hosted page that merely returns 502 is not a transport fixture.
-  assert.deepEqual(classifySpecial({ url: 'https://northstar-parent.example.com/', status: 502, text: 'Bad Gateway' }), []);
+  assert.equal(classify({ url: 'https://northstar-parent.example.com/', pageText: 'HTTP ERROR 502' }).challenge, false);
+  // Only Chromium's error document with the HTTP ERROR text is a proxy verdict.
+  assert.deepEqual(verdictPair(classify({ url: 'chrome-error://chromewebdata/', pageText: 'HTTP ERROR 407' })), ['PROXY_GATEWAY', 'PROXY_GATEWAY_ERROR']);
+  assert.equal(classify({ url: 'chrome-error://chromewebdata/', pageText: 'ERR_TUNNEL_CONNECTION_FAILED' }).challenge, false);
+  assert.equal(proxyTransportMarker({ url: 'chrome-error://chromewebdata/', errorText: 'net::ERR_TUNNEL_CONNECTION_FAILED' }), 'proxy_gateway_407');
   await withLab(async (lab) => {
     for (const status of [407, 502]) for (const role of ['parent', 'widget', 'verify']) {
       const r = await lab[role]('/');
@@ -84,12 +93,13 @@ test('YouTube account gate is the controlled browser route /scenario/youtube-acc
     assert.equal(r.status, 200);
     const text = r.body.replace(/<[^>]+>/g, ' ').replaceAll('&#39;', "'");
     assert.ok(text.includes(SPECIAL.youtubeGate.text));
-    assert.deepEqual(classifySpecial({ url: `${lab.origins.parent}/scenario/youtube-account-gate/${token}`, status: 200, text }), [{ kind: 'youtube_gate' }]);
+    assert.deepEqual(verdictPair(classify({ url: `${lab.origins.parent}/scenario/youtube-account-gate/${token}`, pageText: text })), SPECIAL.youtubeGate.expectedVerdict);
     // No other lane carries the gate sentence.
     for (const lane of Object.values(INTERNAL_LANES)) {
       if (lane.route === 'youtube-account-gate') continue;
       const p = await lab.parent(`/scenario/${lane.route}/${await lab.issue(lane.route)}`);
-      assert.deepEqual(classifySpecial({ text: p.body.replace(/<[^>]+>/g, ' ').replaceAll('&#39;', "'") }), [], lane.route);
+      const t = p.body.replace(/<[^>]+>/g, ' ').replaceAll('&#39;', "'").toLowerCase();
+      assert.ok(!t.includes("sign in to confirm you're not a bot") && !t.includes('please sign in to continue'), lane.route);
     }
   });
 });

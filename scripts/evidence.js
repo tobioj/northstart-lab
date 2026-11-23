@@ -30,10 +30,10 @@ step(`build ${buildInfo.id}`);
 const { LANES } = await import('../functions/generated/data.js');
 const { loadConfig, configFingerprint, sanitizedConfig } = await import('../configuration/config.js');
 const { request } = await import('../tests/helpers.js');
-const { runBrowserSuite, INTERNAL_LANES, expectedVendors, startLab, roleOf, ROLE_PATHS } = await import('../tests/harness/suite.js');
+const { runBrowserSuite, INTERNAL_LANES, EXPECTED_VERDICTS, verdictPair, startLab, roleOf, ROLE_PATHS } = await import('../tests/harness/suite.js');
 const { findChrome } = await import('../tests/harness/browser.js');
 const { SPECIAL, googleSorryObservation } = await import('../tests/harness/special-fixtures.js');
-const { classifySpecial } = await import('../tests/reference-special.js');
+const { classify, responseSignal } = await import('../tests/reference-classifier.js');
 
 // 2. Configuration fingerprint + sanitized example
 const config = await loadConfig(env, LANES);
@@ -53,7 +53,7 @@ const matrix = Object.fromEntries(Object.entries(INTERNAL_LANES).map(([id, l]) =
   ],
   verifyRoutes: ['/api/input/{token}', '/api/verify/{token}', '/api/settle/{token}', '/api/status/{token}'],
   continuation: '/continue/{token}',
-  expectedStatus: l.fixture.status, expectedVendors: expectedVendors(id), edge: l.edge || null,
+  expectedStatus: l.fixture.status, expectedVerdict: EXPECTED_VERDICTS[id], edge: l.edge || null,
   evidence: { screenshot: `screenshots/${id}.png`, continuationScreenshot: `screenshots/${id}-continue.png`, receipts: `scenarios/${l.route}/<instance>/receipt.json` },
 }]));
 save('hostname-route-matrix.PROTECTED.json', {
@@ -140,16 +140,18 @@ if (findChrome()) {
       continuation: { status: l.rec.continuation?.document?.status, state: l.rec.continuation?.scenarioState },
     };
     signal[id] = {
-      expected: expectedVendors(id), hits: l.hits, continuationHits: l.continuationHits,
-      pass: JSON.stringify(l.hits.map((h) => h.vendor)) === JSON.stringify(expectedVendors(id)) && l.continuationHits.length === 0,
+      expectedVerdict: EXPECTED_VERDICTS[id], verdict: verdictPair(l.verdict), signals: l.verdict.signals || [], matchingSignatures: l.vendors,
+      continuationVerdict: verdictPair(l.continuationVerdict), continuationMatchingSignatures: l.continuationVendors,
+      frames: l.input.frames.map((f) => ({ url: f.url.replace(/d{2}.[A-Za-z0-9_-]{22}.[0-9a-z]+.[A-Za-z0-9_-]{43}/, '{token}'), box: f.box, visible: f.visible })),
+      pass: JSON.stringify(verdictPair(l.verdict)) === JSON.stringify(EXPECTED_VERDICTS[id]) && !l.continuationVerdict.challenge && l.continuationVendors.length === 0,
     };
   }
   capture.specialFixtures = {
-    googleRateLimit: { mode: 'protocol-only', observation: googleSorryObservation(), classification: classifySpecial(googleSorryObservation()), browserVisited: false },
-    youtubeGate: { mode: 'browser-route', route: '/scenario/youtube-account-gate/{token}', status: r.lanes['lane-13'].rec.document?.status, textFound: r.lanes['lane-13'].rec.text.includes(SPECIAL.youtubeGate.text) },
+    googleRateLimit: { mode: 'protocol-only', observation: googleSorryObservation(), verdict: verdictPair(classify({ url: googleSorryObservation().url, response: responseSignal(googleSorryObservation()), pageText: googleSorryObservation().text })), browserVisited: false },
+    youtubeGate: { mode: 'browser-route', route: '/scenario/youtube-account-gate/{token}', status: r.lanes['lane-13'].rec.document?.status, textFound: r.lanes['lane-13'].rec.text.includes(SPECIAL.youtubeGate.text), verdict: verdictPair(r.lanes['lane-13'].verdict) },
     proxyGateway: Object.fromEntries(Object.entries(r.special.proxyGateway).map(([k, v]) => [k, {
       navigationError: v.rec.navigationError, errorPage: v.rec.errorPage, authChallenges: v.rec.authChallenges, gatewayLog: v.gatewayLog, blockedExternal: v.rec.blockedExternal,
-      classification: classifySpecial({ errorPageUrl: v.rec.errorPage?.url, netError: v.rec.navigationError }),
+      verdict: verdictPair(v.verdict), proxyTransportMarker: v.marker, proxyTransportMarkerWithIplock502: v.markerWithIplock502,
     }])),
   };
   capture.browserReceipts = r.receipts.length;
@@ -183,7 +185,7 @@ save('SUMMARY.md', `# Northstar Lab - setup evidence (three-origin architecture)
 | Hostname / route / evidence matrix (PROTECTED) | hostname-route-matrix.PROTECTED.json |
 | Health-check output | health-check.txt |
 | Route isolation | route-isolation.json (${routeOk ? 'PASS' : 'FAIL'}, ${isolation.length} checks) |
-| Signal isolation | signal-isolation.json (${signalOk === null ? 'skipped' : signalOk ? 'PASS' : 'FAIL'}, 14 lanes + continuation pages) |
+| Signal isolation (judged by a port of the application's ChallengeClassifier) | signal-isolation.json (${signalOk === null ? 'skipped' : signalOk ? 'PASS' : 'FAIL'}, 14 lanes + continuation pages) |
 | Request capture | request-capture.json |
 | Receipts (one directory per scenario instance) | scenarios/<route>/<instance>/receipt.json |
 | Screenshots | screenshots/ |
@@ -191,8 +193,9 @@ save('SUMMARY.md', `# Northstar Lab - setup evidence (three-origin architecture)
 
 ## Screenshots
 ${shots}
-- [Proxy 407](screenshots/special-proxy-proxy_auth_407.png)
-- [Proxy 502](screenshots/special-proxy-tunnel_502.png)
+- [Proxy 407 (HTTPS CONNECT)](screenshots/special-proxy-proxy_auth_407.png)
+- [Proxy 502 (plain HTTP, HTTP ERROR 502)](screenshots/special-proxy-http_502.png)
+- [Proxy 502 (HTTPS CONNECT, tunnel failure)](screenshots/special-proxy-tunnel_502.png)
 - [Proxy unreachable](screenshots/special-proxy-proxy_unreachable.png)
 
 Google /sorry/ is protocol-only (no screenshot by design). Generated ${new Date().toISOString()} - local only, no external website contacted.

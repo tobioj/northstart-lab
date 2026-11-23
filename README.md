@@ -48,12 +48,7 @@ Special conditions without a hostname of their own:
 | `pages/` | Neutral page titles, shared layout, frame, CSS and the page script |
 | `deployment/adapters/*` | Thin Vercel / Netlify / Cloudflare / Node layers |
 | `deployment/*.md` | Architecture + matrix, DNS (3 records), Cloudflare rule, deployment/TLS checklists, rollback, inputs waiting on you |
-| `tests/` | Setup tests, reference copies of the signature registry and special-condition checks, the browser harness |
+| `tests/` | Setup tests, the port of the application's classifier (`reference-classifier.js`), the browser harness |
 | `evidence/` | Generated setup evidence (git-ignored; contains the PROTECTED matrix) |
 
-**Assumptions to confirm** against the application's detector:
-- header names and values are compared lowercased;
-- URL markers are checked against sub-resource URLs, and frame markers against frame URLs;
-- the special-condition checks look like `tests/reference-special.js`.
-
-To change any marker, edit `configuration/lanes.internal.json` and `tests/reference-matcher.js`.
+**Checked against the application's classifier.** `tests/reference-classifier.js` is a line-by-line JavaScript port of `src/challenges/signatures.py`, `classifier.py` and `network_tap.proxy_transport_marker`. Every lane is asserted to produce its exact `(vendor, surface)` verdict, both over HTTP and in a real browser. If the application's classifier changes, update that file and `EXPECTED_VERDICTS` in `tests/harness/suite.js`. To change a marker, edit `configuration/lanes.internal.json`.
