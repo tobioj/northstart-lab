@@ -1,0 +1,25 @@
+name: northstar-lab
+on:
+  push:
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      # Chrome is preinstalled on ubuntu-latest; the harness blocks every non-loopback request.
+      - run: npm test
+      - run: npm run evidence
+      - name: Upload acceptance evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: northstar-acceptance-evidence
+          path: evidence/
+          retention-days: 30

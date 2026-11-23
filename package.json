@@ -1,10 +1,12 @@
 {
   "name": "northstar-lab",
-  "version": "1.0.0",
+  "version": "2.0.0",
   "private": true,
-  "description": "Northstar Lab: isolated, portable web-testing environment (12 neutral hostnames).",
+  "description": "Northstar Lab: isolated, portable web-testing environment (three role origins, 14 browser lanes).",
   "type": "module",
-  "engines": { "node": ">=22" },
+  "engines": {
+    "node": ">=22"
+  },
   "scripts": {
     "build": "node scripts/build.js",
     "start": "node scripts/serve.js --env-file configuration/local.env",

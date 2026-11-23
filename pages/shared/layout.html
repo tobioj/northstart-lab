@@ -13,10 +13,12 @@
 <main>
   <h1>{{TITLE}}</h1>
   <p class="summary">{{SUMMARY}}</p>
+  {{NOTICE}}
   <dl class="facts">
     <div><dt>Build</dt><dd>{{BUILD}}</dd></div>
     <div><dt>Environment</dt><dd>{{ENVIRONMENT}}</dd></div>
     <div><dt>Page status</dt><dd id="page-status" role="status" aria-live="polite">Loading</dd></div>
+    {{STATE}}
   </dl>
   <p class="actions"><button type="button" id="reload-button">Reload</button> <a href="{{CONTROL_URL}}">Back to control page</a></p>
 {{BODY}}

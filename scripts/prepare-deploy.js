@@ -20,7 +20,12 @@ if (!['vercel', 'netlify', 'cloudflare', 'node'].includes(platform)) {
 const envPath = join(ROOT, a['env-file']);
 if (!existsSync(envPath)) { console.error(`${a['env-file']} not found. Run: npm run plan -- --root-domain <ROOT_DOMAIN> first.`); process.exit(1); }
 const env = readEnvFile(envPath);
-const publicVars = Object.entries(env).filter(([k]) => k.startsWith('NORTHSTAR_') && !/SECRET|TOKEN|PASSWORD|PRIVATE/i.test(k));
+const publicVars = Object.entries(env).filter(([k]) => k.startsWith('NORTHSTAR_') && !/SECRET|SIGNING|AUTHORITY|PASSWORD|PRIVATE/i.test(k));
+// The three role hostnames (the only hostname authority).
+const hosts = ['NORTHSTAR_PARENT_ORIGIN', 'NORTHSTAR_WIDGET_ORIGIN', 'NORTHSTAR_VERIFY_ORIGIN'].map((k) => { try { return new URL(env[k]).hostname; } catch { return null; } }).filter(Boolean);
+if (hosts.length !== 3) { console.error('deploy.env must define NORTHSTAR_PARENT_ORIGIN, NORTHSTAR_WIDGET_ORIGIN and NORTHSTAR_VERIFY_ORIGIN.'); process.exit(1); }
+// Secrets are typed by YOU into the platform's own prompt; they never appear in files, logs or chat.
+const KEYGEN = `node -e "console.log(require('crypto').randomBytes(32).toString('base64url'))"`;
 
 const buildInfo = build({ quiet: true });
 const out = join(ROOT, 'dist', platform);
@@ -43,7 +48,10 @@ if (platform === 'vercel') {
   writeFileSync(join(out, 'public', 'robots.txt'), 'User-agent: *\nDisallow: /\n');
   steps.push(`cd dist/vercel`, `vercel link            # select/create the project "${a.name}"`,
     ...publicVars.map(([k, v]) => `vercel env add ${k} production   # value: ${v === '' ? '(leave empty)' : v}`),
-    ...publicVars.filter(([k]) => /_HOST$/.test(k)).map(([, v]) => `vercel domains add ${v}`),
+    `${KEYGEN}   # generate a signing key locally, then paste it ONLY into the next prompt`,
+    'vercel env add NORTHSTAR_TOKEN_SIGNING_KEY production --sensitive',
+    '(optional) vercel env add NORTHSTAR_MANAGEMENT_AUTHORITY production --sensitive',
+    ...hosts.map((h) => `vercel domains add ${h}`),
     `vercel deploy --prod   # ONLY after external deployment is approved`);
 } else if (platform === 'netlify') {
   copy('deployment/adapters/netlify/netlify', 'netlify');
@@ -52,17 +60,19 @@ if (platform === 'vercel') {
   writeFileSync(join(out, 'public', 'robots.txt'), 'User-agent: *\nDisallow: /\n');
   steps.push(`cd dist/netlify`, `netlify link   # or: netlify sites:create --name ${a.name}`,
     ...publicVars.map(([k, v]) => `netlify env:set ${k} "${v}"`),
-    'Add each NORTHSTAR_*_HOST as a domain alias: Site configuration > Domain management > Add domain alias',
+    `${KEYGEN}   # then: Site configuration > Environment variables > NORTHSTAR_TOKEN_SIGNING_KEY, tick "Contains secret values"`,
+    `Add the three hostnames as domain aliases (Site configuration > Domain management): ${hosts.join(', ')}`,
     'netlify deploy --prod   # ONLY after external deployment is approved');
 } else if (platform === 'cloudflare') {
   copy('deployment/adapters/cloudflare/worker.js', 'worker.js');
-  const hosts = publicVars.filter(([k]) => /_HOST$/.test(k)).map(([, v]) => v).filter(Boolean);
   const toml = [`name = "${a.name}"`, 'main = "worker.js"', 'compatibility_date = "2026-11-01"', 'workers_dev = false', '',
     'routes = [', ...hosts.map((h) => `  { pattern = "${h}", custom_domain = true },`), ']', '', '[vars]',
     ...publicVars.map(([k, v]) => `${k} = ${JSON.stringify(v)}`)].join('\n') + '\n';
   writeFileSync(join(out, 'wrangler.toml'), toml);
   steps.push('cd dist/cloudflare', 'npx wrangler login', 'npx wrangler deploy --dry-run   # validates, uploads nothing',
-    'npx wrangler deploy             # ONLY after external deployment is approved (creates the 12 custom domains)');
+    'npx wrangler secret put NORTHSTAR_TOKEN_SIGNING_KEY   # paste a key generated locally; never commit it',
+    '(optional) npx wrangler secret put NORTHSTAR_MANAGEMENT_AUTHORITY',
+    'npx wrangler deploy             # ONLY after external deployment is approved (creates the 3 custom domains)');
 } else {
   copy('functions/node-adapter.js', 'functions/node-adapter.js');
   mkdirSync(join(out, 'scripts', 'lib'), { recursive: true });
@@ -71,8 +81,8 @@ if (platform === 'vercel') {
   copy('configuration/lanes.internal.json', 'configuration/lanes.internal.json');
   copy('deployment/adapters/node/Dockerfile', 'Dockerfile');
   steps.push('cd dist/node', 'docker build -t northstar-lab .',
-    `docker run -p 8787:8787 ${publicVars.map(([k]) => `-e ${k}`).join(' ')} northstar-lab`,
-    'Put a TLS-terminating proxy (platform load balancer, Caddy, nginx) in front for the 12 hostnames.');
+    `docker run -p 8787:8787 ${publicVars.map(([k]) => `-e ${k}`).join(' ')} -e NORTHSTAR_TOKEN_SIGNING_KEY northstar-lab   # secret from your container platform's secret store`,
+    `Put a TLS-terminating proxy (platform load balancer, Caddy, nginx) in front for: ${hosts.join(', ')} (forward the Host header unchanged).`);
 }
 
 writeFileSync(join(out, 'NORTHSTAR-BUILD.txt'), `build=${buildInfo.id}\nsourceSha=${buildInfo.sourceSha}\nplatform=${platform}\n`);

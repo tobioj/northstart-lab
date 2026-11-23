@@ -1,7 +1,8 @@
 // Bundles pages/ and the lane definitions into functions/generated/data.js so the
 // same handler runs on Node, Vercel, Netlify and Cloudflare without filesystem access.
 // Internal assignment names are stripped: the deployable bundle never contains the
-// lane -> provider mapping.
+// lane -> provider assignment table. (Lane routes such as /scenario/datadome/ are public by
+// design in the three-origin architecture; hostnames stay neutral.)
 import { readFileSync, writeFileSync, mkdirSync, readdirSync, statSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { join, relative, dirname } from 'node:path';
@@ -21,11 +22,7 @@ export function build({ quiet = false } = {}) {
   const lanesDoc = JSON.parse(readFileSync(join(ROOT, 'configuration', 'lanes.internal.json'), 'utf8'));
   const errors = validateLaneDefinitions(lanesDoc.lanes);
   const laneIds = Object.keys(lanesDoc.lanes);
-  if (laneIds.length !== 12) errors.push(`expected 12 lanes, found ${laneIds.length}`);
-  for (const id of laneIds) {
-    const f = lanesDoc.lanes[id].fixture;
-    for (const p of [...f.scripts, ...f.frames]) if (!p.startsWith('/')) errors.push(`${id}: fixture path must be same-origin (${p})`);
-  }
+  if (laneIds.length !== 14) errors.push(`expected 14 lanes, found ${laneIds.length}`);
   if (errors.length) throw new Error(`Lane definitions invalid:\n - ${errors.join('\n - ')}`);
 
   // Source hash = build identifier (deterministic, independent of git).
@@ -47,17 +44,18 @@ export function build({ quiet = false } = {}) {
   const lanes = {};
   const pages = {};
   for (const id of laneIds) {
-    const { assignment, setupType, edge, _comment, ...publicLane } = lanesDoc.lanes[id];
+    const { assignment, setupType, edge, registryVendor, _comment, ...publicLane } = lanesDoc.lanes[id];
     lanes[id] = publicLane;
     pages[id] = JSON.parse(readFileSync(join(ROOT, 'pages', id, 'page.json'), 'utf8'));
   }
+  for (const id of ['index', 'continue']) pages[id] = JSON.parse(readFileSync(join(ROOT, 'pages', id, 'page.json'), 'utf8'));
   const shared = (name) => readFileSync(join(ROOT, 'pages', 'shared', name), 'utf8').replace(/\r\n/g, '\n');
 
   const data = {
     BUILD: { id: `ns-${sourceSha.slice(0, 12)}`, sourceSha },
     LANES: lanes,
     PAGES: pages,
-    TEMPLATES: { layout: shared('layout.html'), frame: shared('frame.html') },
+    TEMPLATES: { layout: shared('layout.html'), frame: shared('frame.html'), image: shared('fixture-image.svg') },
     ASSETS: {
       '/assets/site.css': { type: 'text/css; charset=utf-8', body: shared('site.css') },
       '/assets/page.js': { type: 'text/javascript; charset=utf-8', body: shared('page.js') },

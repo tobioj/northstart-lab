@@ -1,25 +1,54 @@
 {
-  "_comment": "Local-only harness fixtures. These never receive a public hostname and are never part of the deployable handler. Virtual URLs are answered by the browser harness itself (request interception) - Google and YouTube are never contacted.",
-  "harnessHost": "northstar-harness.localhost",
+  "_comment": "Special conditions that have NO public hostname and are never part of the deployable handler. Google /sorry/ is a protocol-level fixture only (the exact URL, status and body text a classifier receives); no owned page imitates it and no browser visits it. Proxy failures are browser-transport fixtures produced by a local gateway; Chromium shows them at chrome-error://chromewebdata/. The YouTube account gate is a normal lane: /scenario/youtube-account-gate/{token} on the parent origin.",
   "googleRateLimit": {
-    "virtualUrl": "https://www.google.com/sorry/index?continue=https://www.google.com/search%3Fq%3Dnorthstar&q=northstar-fixture",
-    "localPath": "/sorry/index",
+    "mode": "protocol-only",
+    "url": "https://www.google.com/sorry/index?continue=https://www.google.com/search%3Fq%3Dnorthstar&q=northstar-fixture",
     "status": 429,
-    "title": "Unusual traffic",
+    "headers": {
+      "content-type": "text/html; charset=UTF-8"
+    },
     "text": "Our systems have detected unusual traffic from your computer network."
   },
   "youtubeGate": {
-    "virtualUrl": "https://www.youtube.com/watch?v=northstar01",
-    "localPath": "/youtube-gate/watch",
+    "mode": "browser-route",
+    "lane": "lane-13",
+    "route": "youtube-account-gate",
     "status": 200,
-    "title": "Confirmation required",
     "text": "Sign in to confirm you're not a bot"
   },
   "proxyGateway": {
+    "mode": "browser-transport",
+    "errorPageUrl": "chrome-error://chromewebdata/",
+    "probeUrl": "https://northstar-proxy-probe.invalid/",
     "variants": {
-      "tunnel_502": { "description": "Local gateway answers every request and CONNECT with 502 Bad Gateway", "expectedBrowserErrors": ["net::ERR_TUNNEL_CONNECTION_FAILED"] },
-      "proxy_unreachable": { "description": "Browser is pointed at a local proxy port with nothing listening", "expectedBrowserErrors": ["net::ERR_PROXY_CONNECTION_FAILED"] }
+      "proxy_auth_407": {
+        "gatewayStatus": 407,
+        "description": "Local gateway answers every CONNECT with 407 Proxy Authentication Required (no credentials are ever supplied)",
+        "expectedBrowserErrors": [
+          "net::ERR_HTTP_RESPONSE_CODE_FAILURE",
+          "net::ERR_INVALID_AUTH_CREDENTIALS"
+        ],
+        "expectedAuthChallenge": {
+          "source": "Proxy",
+          "scheme": "basic",
+          "realm": "northstar-fixture"
+        }
+      },
+      "tunnel_502": {
+        "gatewayStatus": 502,
+        "description": "Local gateway answers every request and CONNECT with 502 Bad Gateway",
+        "expectedBrowserErrors": [
+          "net::ERR_TUNNEL_CONNECTION_FAILED"
+        ]
+      },
+      "proxy_unreachable": {
+        "gatewayStatus": null,
+        "description": "Browser is pointed at a loopback proxy port with nothing listening",
+        "expectedBrowserErrors": [
+          "net::ERR_PROXY_CONNECTION_FAILED"
+        ]
+      }
     },
-    "probeUrl": "https://northstar-proxy-probe.invalid/"
+    "note": "Chromium itself opens background CONNECTs (observed: www.google.com:443) inside a proxied context. They reach only the loopback gateway, which never forwards anything, and are recorded in the gateway log as evidence."
   }
 }

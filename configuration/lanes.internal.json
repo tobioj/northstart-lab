@@ -1,132 +1,173 @@
 {
-  "_comment": "INTERNAL ONLY. Maps neutral lanes to their internal assignment and fixture characteristics. Fixture markers mirror the application's ChallengeSignature registry (src/challenges/signatures). Assignment names are stripped from the deployable bundle by scripts/build.js.",
+  "_comment": "INTERNAL ONLY. Source of truth for the 14 browser lanes. Each lane is a route on the PARENT origin (/scenario/{route}/{token}); its fixture resources, frames and images are served from the WIDGET origin under /resources|/widget|/images/{route}/{token}/...; verification state lives on the VERIFY origin under /api/*/{token}. Marker strings mirror the application's ChallengeSignature registry (see tests/reference-matcher.js) and only ever appear in paths on the owned widget origin. 'code' is the two-digit lane code bound into every token. 'assignment' and 'setupType' are stripped from the deployable bundle by scripts/build.js.",
   "lanes": {
     "control": {
-      "label": "northstar-control",
-      "hostVariable": "NORTHSTAR_CONTROL_HOST",
+      "route": "clean-control",
+      "code": "00",
       "assignment": "control",
       "setupType": "baseline",
-      "fixture": { "status": 200, "headers": {}, "scripts": [], "frames": [] }
+      "fixture": { "status": 200, "headers": {}, "resources": [], "frames": [], "images": [] }
     },
     "lane-01": {
-      "label": "northstar-01",
-      "hostVariable": "NORTHSTAR_LANE_01_HOST",
+      "route": "cloudflare",
+      "code": "01",
       "assignment": "cloudflare",
       "setupType": "real_integration",
       "edge": "cloudflare",
-      "fixture": { "status": 200, "headers": {}, "scripts": [], "frames": [] }
+      "fixture": { "status": 200, "headers": {}, "resources": [], "frames": [], "images": [] }
     },
     "lane-02": {
-      "label": "northstar-02",
-      "hostVariable": "NORTHSTAR_LANE_02_HOST",
+      "route": "datadome",
+      "code": "02",
       "assignment": "datadome",
       "setupType": "controlled_fixture",
       "fixture": {
         "status": 403,
         "headers": { "x-datadome": "protected", "x-dd-b": "1" },
-        "scripts": ["/fx/captcha-delivery.com/c.js"],
-        "frames": ["/fx/captcha-delivery.com/captcha/?initialcid=northstar-fixture"]
+        "resources": ["fx/captcha-delivery.com/c.js"],
+        "frames": ["fx/captcha-delivery.com/captcha/?initialcid=northstar-fixture"],
+        "images": []
       }
     },
     "lane-03": {
-      "label": "northstar-03",
-      "hostVariable": "NORTHSTAR_LANE_03_HOST",
+      "route": "aws-waf",
+      "code": "03",
       "assignment": "aws_waf",
       "setupType": "controlled_fixture",
       "fixture": {
         "status": 202,
         "headers": { "x-amzn-waf-action": "challenge" },
-        "scripts": ["/fx/awswaf.com/challenge.js"],
-        "frames": ["/fx/awswaf.com/captcha/"]
+        "resources": ["fx/awswaf.com/challenge.js"],
+        "frames": ["fx/awswaf.com/captcha/"],
+        "images": []
       }
     },
     "lane-04": {
-      "label": "northstar-04",
-      "hostVariable": "NORTHSTAR_LANE_04_HOST",
+      "route": "perimeterx",
+      "code": "04",
       "assignment": "perimeterx",
       "setupType": "controlled_fixture",
       "fixture": {
         "status": 403,
         "headers": {},
-        "scripts": ["/fx/captcha.px-cloud.net/captcha.js"],
-        "frames": ["/fx/px-cloud.net/challenge/"]
+        "resources": ["fx/captcha.px-cloud.net/captcha.js"],
+        "frames": ["fx/px-cloud.net/challenge/"],
+        "images": []
       }
     },
     "lane-05": {
-      "label": "northstar-05",
-      "hostVariable": "NORTHSTAR_LANE_05_HOST",
+      "route": "akamai",
+      "code": "05",
       "assignment": "akamai",
       "setupType": "controlled_fixture",
       "fixture": {
         "status": 403,
         "headers": { "server": "akamaighost", "akamai-grn": "0.northstar.fixture" },
-        "scripts": ["/_sec/cp_challenge/fixture.js"],
-        "frames": []
+        "resources": ["_sec/cp_challenge/fixture.js"],
+        "frames": [],
+        "images": []
       }
     },
     "lane-06": {
-      "label": "northstar-06",
-      "hostVariable": "NORTHSTAR_LANE_06_HOST",
+      "route": "kasada",
+      "code": "06",
       "assignment": "kasada",
       "setupType": "controlled_fixture",
       "fixture": {
         "status": 429,
         "headers": { "x-kpsdk-ct": "northstar-fixture", "x-kpsdk-cd": "northstar-fixture" },
-        "scripts": ["/fx/kpsdk/ips.js"],
-        "frames": []
+        "resources": ["fx/kpsdk/ips.js"],
+        "frames": [],
+        "images": []
       }
     },
     "lane-07": {
-      "label": "northstar-07",
-      "hostVariable": "NORTHSTAR_LANE_07_HOST",
+      "route": "imperva",
+      "code": "07",
       "assignment": "imperva",
       "setupType": "controlled_fixture",
       "fixture": {
         "status": 403,
         "headers": { "x-iinfo": "northstar-fixture" },
-        "scripts": ["/_incapsula_resource?swjiylwa=northstar"],
-        "frames": ["/_incapsula_resource/frame/"]
+        "resources": ["_incapsula_resource?swjiylwa=northstar"],
+        "frames": ["_incapsula_resource/frame/"],
+        "images": []
       }
     },
     "lane-08": {
-      "label": "northstar-08",
-      "hostVariable": "NORTHSTAR_LANE_08_HOST",
+      "route": "arkose",
+      "code": "08",
       "assignment": "arkose",
       "setupType": "controlled_fixture",
       "fixture": {
         "status": 200,
         "headers": {},
-        "scripts": ["/fx/arkoselabs.com/v2/api.js"],
-        "frames": ["/fx/arkoselabs.com/fc/gc/"]
+        "resources": ["fx/arkoselabs.com/v2/api.js"],
+        "frames": ["fx/arkoselabs.com/fc/gc/"],
+        "images": []
       }
     },
     "lane-09": {
-      "label": "northstar-09",
-      "hostVariable": "NORTHSTAR_LANE_09_HOST",
+      "route": "geetest",
+      "code": "09",
       "assignment": "geetest",
       "setupType": "controlled_fixture",
       "fixture": {
         "status": 200,
         "headers": {},
-        "scripts": ["/fx/gcaptcha4.geetest.com/load.js"],
-        "frames": ["/fx/geetest.com/captcha/"]
+        "resources": ["fx/gcaptcha4.geetest.com/load.js"],
+        "frames": ["fx/geetest.com/captcha/"],
+        "images": ["fx/geetest.com/bg.svg"]
       }
     },
     "lane-10": {
-      "label": "northstar-10",
-      "hostVariable": "NORTHSTAR_LANE_10_HOST",
+      "route": "hcaptcha",
+      "code": "10",
       "assignment": "hcaptcha",
-      "setupType": "real_integration",
+      "setupType": "controlled_fixture",
       "widget": { "kind": "hcaptcha", "siteKeyVariable": "NORTHSTAR_HCAPTCHA_SITE_KEY" },
-      "fixture": { "status": 200, "headers": {}, "scripts": [], "frames": [] }
+      "fixture": {
+        "status": 200,
+        "headers": {},
+        "resources": ["fx/hcaptcha.com/1/api.js"],
+        "frames": ["fx/hcaptcha.com/captcha/checkbox/"],
+        "images": []
+      }
     },
     "lane-11": {
-      "label": "northstar-11",
-      "hostVariable": "NORTHSTAR_LANE_11_HOST",
+      "route": "recaptcha",
+      "code": "11",
       "assignment": "recaptcha",
-      "setupType": "real_integration",
+      "setupType": "controlled_fixture",
       "widget": { "kind": "recaptcha", "siteKeyVariable": "NORTHSTAR_RECAPTCHA_SITE_KEY" },
-      "fixture": { "status": 200, "headers": {}, "scripts": [], "frames": [] }
+      "fixture": {
+        "status": 200,
+        "headers": {},
+        "resources": ["fx/recaptcha/api.js"],
+        "frames": ["fx/recaptcha/api2/anchor"],
+        "images": []
+      }
+    },
+    "lane-12": {
+      "route": "aws-waf-captcha",
+      "code": "12",
+      "assignment": "aws_waf_captcha",
+      "registryVendor": "aws_waf",
+      "setupType": "controlled_fixture",
+      "fixture": {
+        "status": 405,
+        "headers": { "x-amzn-waf-action": "captcha" },
+        "resources": ["fx/captcha.awswaf.com/jsapi.js"],
+        "frames": ["fx/awswaf.com/captcha/puzzle/"],
+        "images": []
+      }
+    },
+    "lane-13": {
+      "route": "youtube-account-gate",
+      "code": "13",
+      "assignment": "youtube_account_gate",
+      "setupType": "special_condition",
+      "fixture": { "status": 200, "headers": {}, "resources": [], "frames": [], "images": [] }
     }
   }
 }

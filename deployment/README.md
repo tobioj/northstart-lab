@@ -1,13 +1,16 @@
-# Deployment adapters
+# Deployment (platform-neutral)
 
-The pages, handler, configuration and tests are shared. Only this thin layer differs per platform:
+Start with [architecture.md](architecture.md) for the three hostnames, the route matrix and the security rules.
+
+One hosting project serves all three hostnames. The pages, handler, configuration and tests are shared; only this thin layer differs per platform:
 
 | Concern | Vercel | Netlify | Cloudflare Workers / Pages | Generic Node |
 |---|---|---|---|---|
-| Routing | `vercel.json` rewrite of every path to `api/northstar` | Function `config.path = "/*"` | Worker receives every request on its custom domains | `scripts/serve.js` (Node http) |
-| Function format | Web `GET/HEAD/...` exports (`adapters/vercel/api/northstar.js`) | Functions v2 default export (`adapters/netlify/...northstar.mjs`) | `export default { fetch }` (`adapters/cloudflare/worker.js`); Pages: same file as `_worker.js` | `functions/node-adapter.js` |
-| Env / secrets | Project env vars; secrets as *Sensitive* | Site env vars; secrets marked *Contains secret values* | `[vars]` in `wrangler.toml`; secrets via `wrangler secret put` | Container/VM env vars |
-| Custom domains | Project → Settings → Domains (12 entries) | Domain management → domain aliases (12) | `routes = [{ pattern, custom_domain = true }]` (auto DNS + TLS) | Your reverse proxy / load balancer |
+| Routing | `vercel.json` rewrites every path to `api/northstar` (path, query and `Host` preserved) | Function `config.path = "/*"` | Worker receives every request on its custom domains | `scripts/serve.js` (Node http) |
+| Function format | Web `GET/POST/...` exports (`adapters/vercel/api/northstar.js`) | Functions v2 default export (`adapters/netlify/...northstar.mjs`) | `export default { fetch }` (`adapters/cloudflare/worker.js`) | `functions/node-adapter.js` |
+| Non-secret config | Project env vars | Site env vars | `[vars]` in `wrangler.toml` | Container/VM env vars |
+| Secrets (`NORTHSTAR_TOKEN_SIGNING_KEY`, optional `NORTHSTAR_MANAGEMENT_AUTHORITY`) | `vercel env add … --sensitive` | Env var marked *Contains secret values* | `wrangler secret put` | Your platform's secret store |
+| Custom domains | Project → Settings → Domains (3 entries) | Domain management → domain aliases (3) | `routes = [{ pattern, custom_domain = true }]` (auto DNS + TLS) | Your reverse proxy / load balancer (forward `Host` unchanged) |
 | Build / deploy | `vercel deploy --prod` | `netlify deploy --prod` | `npx wrangler deploy` | `docker build` / `docker run` |
 
 Prepare a platform folder (nothing is uploaded):
@@ -18,12 +21,12 @@ npm run prepare-deploy -- <vercel|netlify|cloudflare|node>
 ```
 
 `prepare-deploy` writes `dist/<platform>/` and prints the exact commands for that platform.
-**No deployment happens until you run the final deploy command yourself (or approve me running it).**
+**No deployment happens until you run the final deploy command yourself (or explicitly approve me running it).**
 
 ## Platform notes that affect fixtures
 
-- **Server header.** Vercel, Netlify and Cloudflare overwrite the `Server` response header. On those platforms lane 05 is still recognized through `akamai-grn` and `/_sec/cp_challenge`, which is enough for the registry. Only generic Node hosting keeps `server: akamaighost` too.
-- **Cloudflare proxy headers.** Any proxied hostname gets `cf-ray` and `server: cloudflare`. The registry only treats `cf-mitigated: challenge` as Cloudflare, so proxied lanes do not falsely look like Cloudflare. Even so, the spec keeps every lane except 01 **DNS-only** when hosting on Vercel, Netlify or Node.
-- **Vercel rewrites.** The adapter recovers the original path from `__ns_path`. After the first preview deploy, run `npm run verify-deployment` to confirm that every path routes correctly.
+- **Server header.** Vercel, Netlify and Cloudflare overwrite the `Server` response header. On those platforms the Akamai lane is still recognized through `akamai-grn` and `/_sec/cp_challenge`. Only generic Node hosting also keeps `server: akamaighost`.
+- **Cloudflare proxy.** The parent host is proxied for the Cloudflare lane, so every parent response gets `cf-ray` and `server: cloudflare`. The registry treats only `cf-mitigated: challenge` as Cloudflare. Keep Bot Fight Mode, Email Obfuscation and Rocket Loader off for the parent host ([cloudflare-waf.md](cloudflare-waf.md)). `verify-deployment` fails if Cloudflare injects anything into another lane.
+- **Scenario state on serverless.** Tokens validate on any instance. Per-instance completion state is in memory by default (exact on a single Node process). See [architecture.md](architecture.md#state-on-serverless-platforms).
 
-Files: [dns-plan.md](dns-plan.md) · [cloudflare-waf.md](cloudflare-waf.md) · [deployment-checklist.md](deployment-checklist.md) · [tls-checklist.md](tls-checklist.md) · [rollback.md](rollback.md) · [waiting-on-you.md](waiting-on-you.md)
+Files: [architecture.md](architecture.md) · [dns-plan.md](dns-plan.md) · [cloudflare-waf.md](cloudflare-waf.md) · [deployment-checklist.md](deployment-checklist.md) · [tls-checklist.md](tls-checklist.md) · [rollback.md](rollback.md) · [waiting-on-you.md](waiting-on-you.md)

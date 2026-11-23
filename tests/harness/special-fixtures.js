@@ -1,53 +1,39 @@
-// Local-only special-condition fixtures (never deployed, never given public DNS):
-//   1. Google /sorry/ rate-limit page   2. YouTube account-confirmation gate
-//   3. Browser proxy gateway error (a local gateway that returns 502, plus an unreachable proxy port)
+// Special-condition fixtures without public hostnames (never deployed, never given DNS):
+//   1. Google /sorry/   protocol-level fixture: the classifier input (URL, status, body text) only.
+//   2. Proxy gateway    local gateways that answer 407 / 502 (and an unreachable port) so the
+//                       browser produces real transport errors at chrome-error://chromewebdata/.
+// The YouTube account gate is a regular parent-origin lane (/scenario/youtube-account-gate/{token}).
 import http from 'node:http';
 import net from 'node:net';
 import { readFileSync } from 'node:fs';
-import { escapeHtml } from '../../functions/render.js';
 
 export const SPECIAL = JSON.parse(readFileSync(new URL('./special-fixtures.json', import.meta.url), 'utf8'));
 
-function page(title, text) {
-  return `<!doctype html>\n<html lang="en"><head><meta charset="utf-8"><title>${escapeHtml(title)}</title></head>` +
-    `<body><main><h1>${escapeHtml(title)}</h1><p>${escapeHtml(text)}</p></main></body></html>\n`;
+/** The Google /sorry/ classifier input. Built in memory; never served by any origin or browser. */
+export function googleSorryObservation() {
+  const f = SPECIAL.googleRateLimit;
+  return { url: f.url, status: f.status, headers: { ...f.headers }, text: f.text };
 }
 
-/** Render a special fixture response without any network: { status, headers, body }. */
-export function renderSpecial(name) {
-  const f = SPECIAL[name];
-  return {
-    status: f.status,
-    headers: { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' },
-    body: page(f.title, f.text),
-  };
-}
-
-/** HTTP server for the harness fixtures (google sorry + youtube gate), loopback only. */
-export function startHarnessServer({ port = 0 } = {}) {
+/**
+ * A local "proxy" that fails every CONNECT tunnel (and plain request) with a fixed status.
+ * Records what it saw (method + target + status) as protocol evidence.
+ * @param {{status: 407|502, port?: number}} o
+ */
+export function startFailingGateway({ status = 502, port = 0 } = {}) {
+  const seen = [];
+  const reason = status === 407 ? 'Proxy Authentication Required' : 'Bad Gateway';
+  const extra = status === 407 ? 'Proxy-Authenticate: Basic realm="northstar-fixture"\r\n' : '';
   const server = http.createServer((req, res) => {
-    const host = String(req.headers.host || '').split(':')[0].toLowerCase();
-    const path = new URL(req.url, 'http://x').pathname;
-    if (host !== SPECIAL.harnessHost) { res.writeHead(421, { 'content-type': 'text/plain' }); return res.end('unknown host\n'); }
-    const match = ['googleRateLimit', 'youtubeGate'].find((k) => SPECIAL[k].localPath === path);
-    if (!match) { res.writeHead(404, { 'content-type': 'text/plain' }); return res.end('not found\n'); }
-    const r = renderSpecial(match);
-    res.writeHead(r.status, r.headers);
-    res.end(r.body);
-  });
-  return new Promise((resolve) => server.listen(port, '127.0.0.1', () => resolve({ server, port: server.address().port })));
-}
-
-/** A local "proxy" that fails every request and CONNECT tunnel with 502 Bad Gateway. */
-export function startFailingGateway({ port = 0 } = {}) {
-  const server = http.createServer((req, res) => {
-    res.writeHead(502, { 'content-type': 'text/plain', connection: 'close' });
-    res.end('Bad Gateway\n');
+    seen.push({ method: req.method, target: String(req.url).slice(0, 200), status });
+    res.writeHead(status, { 'content-type': 'text/plain', connection: 'close', ...(status === 407 ? { 'proxy-authenticate': 'Basic realm="northstar-fixture"' } : {}) });
+    res.end(`${reason}\n`);
   });
   server.on('connect', (req, socket) => {
-    socket.end('HTTP/1.1 502 Bad Gateway\r\nContent-Length: 0\r\nConnection: close\r\n\r\n');
+    seen.push({ method: 'CONNECT', target: String(req.url).slice(0, 200), status });
+    socket.end(`HTTP/1.1 ${status} ${reason}\r\n${extra}Content-Length: 0\r\nConnection: close\r\n\r\n`);
   });
-  return new Promise((resolve) => server.listen(port, '127.0.0.1', () => resolve({ server, port: server.address().port })));
+  return new Promise((resolve) => server.listen(port, '127.0.0.1', () => resolve({ server, port: server.address().port, seen })));
 }
 
 /** Reserve then release a loopback port so nothing listens on it (unreachable proxy). */

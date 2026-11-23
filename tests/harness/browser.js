@@ -1,7 +1,7 @@
 // Minimal Chrome DevTools Protocol driver (no dependencies; uses an installed Chrome/Edge).
-// Every page request is intercepted: loopback hosts continue, harness "virtual URLs" are
-// answered locally, and anything else is BLOCKED and recorded - so automated runs never
-// contact external websites.
+// Every page request is intercepted: loopback hosts continue and anything else is BLOCKED and
+// recorded - so automated runs never contact external websites. In proxy-fixture contexts only
+// the probe URL may use the (local, always-failing) gateway; everything else is blocked.
 import { spawn } from 'node:child_process';
 import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -17,7 +17,7 @@ export function findChrome() {
     'C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe',
     'C:/Program Files/Microsoft/Edge/Application/msedge.exe',
     '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
-    '/usr/bin/google-chrome', '/usr/bin/chromium', '/usr/bin/chromium-browser',
+    '/usr/bin/google-chrome', '/usr/bin/google-chrome-stable', '/usr/bin/chromium', '/usr/bin/chromium-browser',
   ].filter(Boolean);
   return candidates.find((p) => existsSync(p)) || null;
 }
@@ -62,7 +62,8 @@ export async function launchBrowser() {
   const exe = findChrome();
   if (!exe) throw new Error('No Chrome/Edge found (set NORTHSTAR_CHROME_PATH)');
   const profile = mkdtempSync(join(tmpdir(), 'northstar-browser-'));
-  const proc = spawn(exe, [...BROWSER_FLAGS, `--user-data-dir=${profile}`, '--remote-debugging-port=0', 'about:blank'], { stdio: ['ignore', 'ignore', 'pipe'] });
+  const extra = process.platform === 'linux' && process.getuid && process.getuid() === 0 ? ['--no-sandbox'] : [];
+  const proc = spawn(exe, [...BROWSER_FLAGS, ...extra, `--user-data-dir=${profile}`, '--remote-debugging-port=0', 'about:blank'], { stdio: ['ignore', 'ignore', 'pipe'] });
   const wsUrl = await new Promise((resolve, reject) => {
     let buf = '';
     const t = setTimeout(() => reject(new Error('browser did not start')), 20000);
@@ -94,41 +95,61 @@ const isLoopback = (h) => h === 'localhost' || h.endsWith('.localhost') || h ===
 export const ENVIRONMENT_INJECTION_HOSTS = [/(^|\.)kaspersky-labs\.com$/i];
 const isEnvironmentInjection = (h) => ENVIRONMENT_INJECTION_HOSTS.some((re) => re.test(h));
 
+const lowerHeaders = (h) => Object.fromEntries(Object.entries(h || {}).map(([k, v]) => [k.toLowerCase(), v]));
+
+async function snapshot(s) {
+  const { result } = await s('Runtime.evaluate', {
+    returnByValue: true,
+    expression: `JSON.stringify({
+      location: location.href,
+      title: document.title,
+      pageStatus: (document.getElementById('page-status') || {}).textContent || null,
+      scenarioState: (document.getElementById('scenario-state') || {}).textContent || null,
+      html: document.documentElement.outerHTML,
+      text: document.body ? document.body.innerText : '',
+      localStorage: (() => { try { return Object.assign({}, localStorage); } catch (e) { return {}; } })(),
+      sessionStorage: (() => { try { return Object.assign({}, sessionStorage); } catch (e) { return {}; } })(),
+      documentCookie: (() => { try { return document.cookie; } catch (e) { return ''; } })(),
+      iframeSrcs: [...document.querySelectorAll('iframe')].map((f) => f.src)
+    })`,
+  });
+  const snap = JSON.parse(result.value);
+  const { frameTree } = await s('Page.getFrameTree');
+  const frames = [];
+  (function walk(node) { for (const c of node.childFrames || []) { frames.push(c.frame.url); walk(c); } })(frameTree);
+  snap.frameUrls = [...new Set([...frames, ...snap.iframeSrcs])];
+  snap.cookies = (await s('Network.getCookies')).cookies;
+  return snap;
+}
+
 /**
  * Load one URL in a fresh, isolated browser context and record everything observable.
  * @param {object} opts
- * @param {Record<string,{status:number,headers:object,body:string}>} [opts.virtual] exact URL -> local response
- * @param {string} [opts.proxyServer] route this context through a proxy (no interception)
+ * @param {string} [opts.proxyServer] route this context through a proxy; only proxyAllow URLs may use it
+ * @param {(url: string) => boolean} [opts.proxyAllow]
+ * @param {boolean} [opts.complete] click #complete-button and record the continuation page
  * @param {string} [opts.screenshotPath]
  */
-export async function visit(browser, url, { virtual = {}, proxyServer, screenshotPath, settleMs = 700 } = {}) {
+export async function visit(browser, url, { proxyServer, proxyAllow = () => false, complete = false, screenshotPath, settleMs = 700 } = {}) {
   const { cdp } = browser;
   const { browserContextId } = await cdp.send('Target.createBrowserContext',
     proxyServer ? { proxyServer, proxyBypassList: '' } : {});
   const { targetId } = await cdp.send('Target.createTarget', { url: 'about:blank', browserContextId });
-  const { sessionId } = await cdp.send('Target.attachToTarget', { targetId, flatten: true });
+  let { sessionId } = await cdp.send('Target.attachToTarget', { targetId, flatten: true });
   const s = (m, p) => cdp.send(m, p, sessionId);
 
-  const rec = { url, requests: [], blockedExternal: [], environmentInjected: [], answeredLocally: [], responses: [], navigationError: null };
-  let onLoad; const loaded = new Promise((r) => { onLoad = r; });
+  const rec = { url, requests: [], blockedExternal: [], environmentInjected: [], responses: [], authChallenges: [], navigationError: null };
+  let onLoad; let loaded = new Promise((r) => { onLoad = r; });
   const off = cdp.on(async (msg) => {
     if (msg.sessionId !== sessionId) return;
     const p = msg.params;
     if (msg.method === 'Fetch.requestPaused') {
       const reqUrl = p.request.url;
       rec.requests.push(reqUrl);
-      const v = virtual[reqUrl];
       let host = '';
       try { host = new URL(reqUrl).hostname; } catch { /* data: etc */ }
       try {
-        if (v) {
-          rec.answeredLocally.push(reqUrl);
-          await s('Fetch.fulfillRequest', {
-            requestId: p.requestId, responseCode: v.status,
-            responseHeaders: Object.entries(v.headers).map(([name, value]) => ({ name, value })),
-            body: Buffer.from(v.body).toString('base64'),
-          });
-        } else if (isLoopback(host) || reqUrl.startsWith('data:')) {
+        if ((!proxyServer && isLoopback(host)) || reqUrl.startsWith('data:') || (proxyServer && proxyAllow(reqUrl))) {
           await s('Fetch.continueRequest', { requestId: p.requestId });
         } else if (isEnvironmentInjection(host)) {
           rec.environmentInjected.push(reqUrl);
@@ -138,6 +159,10 @@ export async function visit(browser, url, { virtual = {}, proxyServer, screensho
           await s('Fetch.failRequest', { requestId: p.requestId, errorReason: 'BlockedByClient' });
         }
       } catch { /* target closing */ }
+    } else if (msg.method === 'Fetch.authRequired') {
+      // Record the challenge as evidence; credentials are never supplied.
+      rec.authChallenges.push({ source: p.authChallenge.source, scheme: p.authChallenge.scheme, realm: p.authChallenge.realm, url: p.request.url });
+      try { await s('Fetch.continueWithAuth', { requestId: p.requestId, authChallengeResponse: { response: 'CancelAuth' } }); } catch { /* closing */ }
     } else if (msg.method === 'Network.responseReceived') {
       rec.responses.push({ url: p.response.url, status: p.response.status, headers: p.response.headers, type: p.type, frameId: p.frameId });
     } else if (msg.method === 'Page.loadEventFired') onLoad();
@@ -146,48 +171,59 @@ export async function visit(browser, url, { virtual = {}, proxyServer, screensho
   await s('Page.enable');
   await s('Network.enable');
   await s('Network.setCacheDisabled', { cacheDisabled: true });
-  if (!proxyServer) await s('Fetch.enable', { patterns: [{ urlPattern: '*', requestStage: 'Request' }] });
+  await s('Fetch.enable', { patterns: [{ urlPattern: '*', requestStage: 'Request' }], handleAuthRequests: Boolean(proxyServer) });
 
   const nav = await s('Page.navigate', { url });
   if (nav.errorText) rec.navigationError = nav.errorText;
   else { await Promise.race([loaded, delay(10000)]); await delay(settleMs); }
 
-  const doc = rec.responses.find((r) => r.type === 'Document' && r.frameId === nav.frameId);
-  rec.document = doc ? { url: doc.url, status: doc.status, headers: Object.fromEntries(Object.entries(doc.headers).map(([k, v]) => [k.toLowerCase(), v])) } : null;
+  const mainDoc = (after = 0) => {
+    const doc = rec.responses.slice(after).filter((r) => r.type === 'Document' && r.frameId === nav.frameId).pop();
+    return doc ? { url: doc.url, status: doc.status, headers: lowerHeaders(doc.headers) } : null;
+  };
+  rec.document = mainDoc();
 
   if (!rec.navigationError) {
-    const { result } = await s('Runtime.evaluate', {
-      returnByValue: true,
-      expression: `JSON.stringify({
-        title: document.title,
-        pageStatus: (document.getElementById('page-status') || {}).textContent || null,
-        html: document.documentElement.outerHTML,
-        text: document.body ? document.body.innerText : '',
-        localStorage: (() => { try { return Object.assign({}, localStorage); } catch (e) { return {}; } })(),
-        sessionStorage: (() => { try { return Object.assign({}, sessionStorage); } catch (e) { return {}; } })(),
-        documentCookie: (() => { try { return document.cookie; } catch (e) { return ''; } })(),
-        iframeSrcs: [...document.querySelectorAll('iframe')].map((f) => f.src)
-      })`,
-    });
-    Object.assign(rec, JSON.parse(result.value));
-    const { frameTree } = await s('Page.getFrameTree');
-    const frames = [];
-    (function walk(node) { for (const c of node.childFrames || []) { frames.push(c.frame.url); walk(c); } })(frameTree);
-    rec.frameUrls = [...new Set([...frames, ...rec.iframeSrcs])];
-    rec.cookies = (await s('Network.getCookies')).cookies;
+    Object.assign(rec, await snapshot(s));
+  } else {
+    // Chromium replaces the page with its internal error document (often in a new renderer):
+    // re-attach if needed and record the error document's URL.
+    await delay(500);
+    let tree = null;
+    try { tree = (await s('Page.getFrameTree')).frameTree; } catch {
+      const again = await cdp.send('Target.attachToTarget', { targetId, flatten: true });
+      sessionId = again.sessionId;
+      tree = ((await cdp.send('Page.getFrameTree', {}, sessionId).catch(() => ({}))) || {}).frameTree || null;
+    }
+    rec.errorPage = tree ? { url: tree.frame.url, unreachableUrl: tree.frame.unreachableUrl || null } : null;
   }
-  if (screenshotPath) {
+
+  const shoot = async (path) => {
     let shot;
     try {
       shot = await s('Page.captureScreenshot', { format: 'png' });
     } catch {
-      // Chrome error pages live in a new renderer, detaching our session: re-attach once.
       await delay(500);
       const again = await cdp.send('Target.attachToTarget', { targetId, flatten: true });
       shot = await cdp.send('Page.captureScreenshot', { format: 'png' }, again.sessionId).catch(() => null);
     }
-    if (shot) writeFileSync(screenshotPath, Buffer.from(shot.data, 'base64'));
+    if (shot) writeFileSync(path, Buffer.from(shot.data, 'base64'));
+  };
+
+  if (complete && !rec.navigationError) {
+    if (screenshotPath) await shoot(screenshotPath);
+    const reqIdx = rec.requests.length;
+    const resIdx = rec.responses.length;
+    loaded = new Promise((r) => { onLoad = r; });
+    await s('Runtime.evaluate', { expression: "document.getElementById('complete-button').click()" });
+    await Promise.race([loaded, delay(10000)]);
+    await delay(settleMs);
+    const snap = await snapshot(s);
+    rec.continuation = { ...snap, requests: rec.requests.slice(reqIdx), document: mainDoc(resIdx) };
   }
+
+  if (screenshotPath && complete && !rec.navigationError) await shoot(screenshotPath.replace(/\.png$/, '-continue.png'));
+  else if (screenshotPath && !complete) await shoot(screenshotPath);
   off();
   await cdp.send('Target.closeTarget', { targetId }).catch(() => {});
   await cdp.send('Target.disposeBrowserContext', { browserContextId }).catch(() => {});

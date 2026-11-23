@@ -1,20 +1,17 @@
-# Waiting on you
+# Waiting on you (Phase 2 inputs)
 
 Everything else is built and tested locally. These values are all that's left. **Send only non-secret values in chat.**
 
 | Value | Status | Where it goes |
 |---|---|---|
-| `ROOT_DOMAIN` | ⏳ needed | `npm run plan -- --root-domain ...` |
+| `ROOT_DOMAIN` | ⏳ needed | `npm run plan -- --root-domain ...` → `northstar-parent/-widget/-verify.<ROOT_DOMAIN>` |
 | `HOSTING_PLATFORM` (vercel / netlify / cloudflare / node) | ⏳ needed | `--platform` |
-| `HOSTING_PROJECT_NAME` / `HOSTING_PROJECT_ID` | ⏳ after you create the project | `prepare-deploy --name` |
-| `HOSTING_DNS_TARGET` (CNAME target or IP) | ⏳ shown by the platform when you add a domain | `--target` (and `--record-type A` if it's an IP) |
-| `HOSTING_DEPLOYMENT_COMMAND` | ✅ printed by `prepare-deploy` | |
+| `HOSTING_PROJECT` (name, and ID if the platform has one) | ⏳ after you create the one project | `prepare-deploy --name` |
+| `DNS_TARGET` (CNAME target or IP) | ⏳ shown by the platform when you add the hostnames | `--target` (and `--record-type A` if it's an IP) |
+| `DEPLOYMENT_METHOD` (CLI from your machine, Git integration, or CI) | ⏳ needed | Decides who runs the final deploy command |
 | `CLOUDFLARE_ZONE_NAME` / `CLOUDFLARE_ZONE_ID` | ⏳ after the domain is on Cloudflare | Reference only; the zone ID is not secret |
-| `CLOUDFLARE_PROXY_ENABLED` | ✅ planned: `northstar-01` only | dns-plan.md |
-| `HCAPTCHA_PUBLIC_SITE_KEY` | ⏳ from the hCaptcha dashboard | `NORTHSTAR_HCAPTCHA_SITE_KEY` |
-| `HCAPTCHA_SECRET_REFERENCE` | optional | Only the *name* of the platform secret, e.g. `NORTHSTAR_HCAPTCHA_SECRET` |
-| `RECAPTCHA_PUBLIC_SITE_KEY` | ⏳ from the reCAPTCHA admin console | `NORTHSTAR_RECAPTCHA_SITE_KEY` |
-| `RECAPTCHA_SECRET_REFERENCE` | optional | Only the *name*, e.g. `NORTHSTAR_RECAPTCHA_SECRET` |
 | `EXTERNAL_DEPLOYMENT_APPROVED` | ❌ false | Say so explicitly in chat when you approve |
 
-Until then, local development uses the providers' published **test** site keys (see `configuration/local.env`).
+**Secrets (never in chat, files or Git):** `NORTHSTAR_TOKEN_SIGNING_KEY` (required) and `NORTHSTAR_MANAGEMENT_AUTHORITY` (optional). Generate them on your own machine and store them only in the platform's secret manager. Just tell me "the signing key is set".
+
+**No longer needed:** hCaptcha/reCAPTCHA site keys. Those lanes are controlled fixtures by default. Keys are needed only if you later turn on `NORTHSTAR_REAL_WIDGETS=true`, which contacts those providers.
