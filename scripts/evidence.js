@@ -23,7 +23,7 @@ const git = (cmd) => { try { return execSync(`git ${cmd}`, { cwd: ROOT, stdio: [
 
 // 1. Build SHA and Git identity of what was tested
 const buildInfo = build({ quiet: true });
-const gitInfo = { commit: git('rev-parse HEAD'), branch: git('rev-parse --abbrev-ref HEAD'), headTree: git('rev-parse HEAD^{tree}'), workingTreeClean: git('status --porcelain') === '' };
+const gitInfo = { commit: git('rev-parse HEAD'), branch: git('rev-parse --abbrev-ref HEAD'), headTree: git('log -1 --format=%T'), workingTreeClean: git('status --porcelain') === '' };
 save('build.json', { buildId: buildInfo.id, sourceSha256: buildInfo.sourceSha, git: gitInfo, node: process.version, generatedAt: new Date().toISOString() });
 step(`build ${buildInfo.id}`);
 
