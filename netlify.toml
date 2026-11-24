@@ -1,0 +1,14 @@
+# Netlify: deploy straight from Git (repository root = base directory).
+# One site serves all three hostnames (northstar-parent / -widget / -verify); the function
+# routes by the incoming Host header. Configuration is set in the Netlify UI, not here.
+# See deployment/netlify-setup.md.
+[build]
+  command = "node scripts/build.js"
+  publish = "public"
+
+[build.environment]
+  NODE_VERSION = "22"
+
+[functions]
+  directory = "netlify/functions"
+  node_bundler = "esbuild"

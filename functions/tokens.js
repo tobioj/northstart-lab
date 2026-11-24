@@ -71,3 +71,34 @@ export async function secretEquals(a, b) {
 
 /** Pattern used to redact tokens from logs. */
 export const TOKEN_IN_TEXT = /\d{2}\.[A-Za-z0-9_-]{22}\.[0-9a-z]{1,10}\.[A-Za-z0-9_-]{43}/g;
+
+// ---------------------------------------------------------------------------
+// Scenario progress proofs: signed, self-contained progress so completion works when requests
+// land on different serverless instances (no shared storage needed). The browser carries the
+// latest proof between steps (x-northstar-proof header, or ?p= on the continuation URL).
+// A proof is only valid for the token instance it was issued for.
+const PROOF_STATES = ['input', 'verified', 'settled'];
+const proofMaterial = (id, body) => enc.encode(`nsp1|${id}|${body}`);
+
+export async function makeProof(config, id, record) {
+  const body = b64url(enc.encode(JSON.stringify({ s: record.state, t: record.steps, i: record.input, r: record.receipt })));
+  const mac = new Uint8Array(await globalThis.crypto.subtle.sign('HMAC', config.tokenKey, proofMaterial(id, body)));
+  return `${body}.${b64url(mac)}`;
+}
+
+/** @returns {Promise<{state: string, steps: object, input: string|null, receipt: object|null}|null>} */
+export async function readProof(config, id, proof) {
+  if (typeof proof !== 'string' || proof.length > 4096) return null;
+  const parts = proof.split('.');
+  if (parts.length !== 2 || !parts[0] || !parts[1]) return null;
+  const [body, mac] = parts;
+  let sig;
+  try { sig = fromB64url(mac); } catch { return null; }
+  if (b64url(sig) !== mac) return null;
+  if (!(await globalThis.crypto.subtle.verify('HMAC', config.tokenKey, sig, proofMaterial(id, body)))) return null;
+  try {
+    const d = JSON.parse(new TextDecoder().decode(fromB64url(body)));
+    if (!PROOF_STATES.includes(d.s)) return null;
+    return { state: d.s, steps: d.t || {}, input: d.i || null, receipt: d.r || null };
+  } catch { return null; }
+}

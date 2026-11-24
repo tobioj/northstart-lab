@@ -18,8 +18,8 @@
 import { BUILD, LANES, PAGES, TEMPLATES, ASSETS } from './generated/data.js';
 import { loadConfig, laneReadiness, configFingerprint, sha256 } from '../configuration/config.js';
 import { renderParentPage, contentSecurityPolicy } from './render.js';
-import { issueToken, verifyToken, signText, secretEquals, nowSeconds, b64url } from './tokens.js';
-import { MemoryStore, newRecord } from './state.js';
+import { issueToken, verifyToken, signText, secretEquals, nowSeconds, b64url, makeProof, readProof } from './tokens.js';
+import { MemoryStore, newRecord, STATES } from './state.js';
 
 const FIXTURE_SCRIPT = '/* Northstar controlled fixture resource. Intentionally inert. */\n';
 const MAX_BODY = 1024;
@@ -107,8 +107,15 @@ function tokenFailure(reason, headers) {
   return reason === 'expired' ? json(410, { status: 'expired' }, headers) : json(404, { status: 'unknown_token' }, headers);
 }
 
-async function recordFor(store, t) {
-  return (await store.get(t.id)) || newRecord(t);
+/**
+ * Current record for a token instance: the instance-local store, advanced by a valid signed
+ * progress proof when the request carries one (so steps may land on different instances).
+ */
+async function recordFor(ctx, t, proof = null) {
+  let rec = await ctx.store.get(t.id);
+  const p = proof ? await readProof(ctx.config, t.id, proof) : null;
+  if (p && (!rec || STATES.indexOf(p.state) > STATES.indexOf(rec.state))) rec = { ...newRecord(t), ...p };
+  return rec || newRecord(t);
 }
 
 // ---------------------------------------------------------------- parent origin
@@ -162,7 +169,7 @@ async function parentRoute(ctx) {
   if (parts[0] === 'continue' && parts.length === 2) {
     const t = await tokenFor(config, parts[1], null, now);
     if (!t.ok) return tokenFailure(t.reason);
-    const record = await recordFor(ctx.store, t);
+    const record = await recordFor(ctx, t, url.searchParams.get('p'));
     const state = record.state === 'settled' ? 'Scenario complete' : 'Scenario not complete';
     return respond(200, renderParentPage({ ...common, page: PAGES.continue, status: state }), 'text/html; charset=utf-8', {
       ...pageCsp({}), 'cross-origin-opener-policy': 'same-origin',
@@ -216,7 +223,7 @@ function corsFor(request, config) {
   return {
     'access-control-allow-origin': config.origins.parent,
     'access-control-allow-methods': 'GET, POST',
-    'access-control-allow-headers': 'content-type',
+    'access-control-allow-headers': 'content-type, x-northstar-proof',
     'access-control-max-age': '600',
     vary: 'Origin',
   };
@@ -230,12 +237,13 @@ async function readJson(request) {
   try { return { value: JSON.parse(new TextDecoder().decode(buf)) }; } catch { return { error: 'invalid JSON' }; }
 }
 
-function publicState(record, laneId) {
+async function publicState(config, record, t) {
   return {
-    lane: LANES[laneId].code,
+    lane: LANES[t.laneId].code,
     state: record.state,
     steps: record.steps,
     receipt: record.receipt,
+    proof: record.state === 'issued' || record.state === 'revoked' ? null : await makeProof(config, t.id, record),
   };
 }
 
@@ -279,10 +287,10 @@ async function verifyRoute(ctx) {
 
   const t = await tokenFor(config, parts[2], null, now);
   if (!t.ok) return tokenFailure(t.reason, headers);
-  const record = await recordFor(ctx.store, t);
+  const record = await recordFor(ctx, t, request.headers.get('x-northstar-proof'));
   if (record.state === 'revoked') return json(410, { status: 'revoked' }, headers);
 
-  if (parts[1] === 'status') return json(200, publicState(record, t.laneId), headers);
+  if (parts[1] === 'status') return json(200, await publicState(config, record, t), headers);
 
   if (!step.from.includes(record.state)) return json(409, { status: 'conflict', state: record.state }, headers);
   if (parts[1] === 'input') {
@@ -303,7 +311,7 @@ async function verifyRoute(ctx) {
     }
   }
   await ctx.store.put(t.id, record, now);
-  return json(200, publicState(record, t.laneId), headers);
+  return json(200, await publicState(config, record, t), headers);
 }
 
 async function manageRoute(ctx) {
@@ -339,7 +347,7 @@ async function manageRoute(ctx) {
     if (method !== 'POST') return json(405, { status: 'method_not_allowed' }, { ...LOCKED(), allow: 'POST' });
     const t = await tokenFor(config, parts[3], null, now);
     if (!t.ok) return tokenFailure(t.reason);
-    const record = await recordFor(ctx.store, t);
+    const record = await recordFor(ctx, t);
     record.state = 'revoked';
     record.steps = { ...record.steps, revoked: new Date(now * 1000).toISOString() };
     await ctx.store.put(t.id, record, now);

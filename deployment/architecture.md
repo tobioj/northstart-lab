@@ -81,7 +81,9 @@ Two lanes on the same parent origin share a browser security origin, so isolatio
 
 ## State on serverless platforms
 
-Token validation is stateless, so it works on every platform and instance. Per-instance state (input/verified/settled, receipts, revocation) lives in the handler's state store. The default is in-memory, which is exact on a single Node process. On multi-instance serverless hosts (Vercel, Netlify, Workers), a status call may land on an instance that has not seen the earlier steps. An adapter can pass a shared store (Workers KV, Vercel KV, Netlify Blobs) with the same async `get/put/list` interface. That is a Phase 2 choice tied to the hosting platform you pick.
+Token validation is stateless, so it works on every platform and instance. So does scenario progress: each step returns a **signed progress proof** (HMAC over the instance id and its state, steps and receipt), and the page sends the latest proof with the next step (`x-northstar-proof`) and on the continuation URL (`?p=`). Any instance holding the signing key can therefore serve any step. A proof is valid only for its own token instance and can't be forged, replayed on another instance, or used to skip steps.
+
+The handler's state store is still used on top of that. The default is in-memory and exact on a single Node process; it is what makes receipts, evidence files and revocation work there. On multi-instance serverless hosts (Vercel, Netlify, Workers) only **revocation** and the "widget closed after settle" check are best-effort, because they need shared storage. To invalidate everything, rotate `NORTHSTAR_TOKEN_SIGNING_KEY`. An adapter can pass a shared store (Workers KV, Vercel KV, Netlify Blobs) with the same async `get/put/list` interface if exact revocation is needed.
 
 <!-- migration-note -->
 ## Migration note: from 12 hostnames to 3

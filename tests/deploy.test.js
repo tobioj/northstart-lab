@@ -53,10 +53,37 @@ test('every script and adapter parses (catches CLI-only breakage the other tests
   const files = [
     ...readdirSync(new URL('../scripts/', import.meta.url)).filter((f) => f.endsWith('.js')).map((f) => `../scripts/${f}`),
     '../deployment/adapters/vercel/api/northstar.js', '../deployment/adapters/cloudflare/worker.js',
-    '../deployment/adapters/netlify/netlify/functions/northstar.mjs', '../tests/harness/serve-harness.js',
+    '../deployment/adapters/netlify/netlify/functions/northstar.mjs', '../netlify/functions/northstar.mjs', '../tests/harness/serve-harness.js',
   ];
   for (const f of files) {
     const r = spawnSync(process.execPath, ['--check', fileURLToPath(new URL(f, import.meta.url))], { encoding: 'utf8' });
     assert.equal(r.status, 0, `${f}: ${r.stderr}`);
   }
+});
+
+test('the repository root is deployable on Netlify from Git as-is', async () => {
+  const toml = readFileSync(new URL('../netlify.toml', import.meta.url), 'utf8');
+  assert.match(toml, /command = "node scripts\/build\.js"/);
+  assert.match(toml, /publish = "public"/);
+  assert.match(toml, /NODE_VERSION = "22"/);
+  assert.match(toml, /directory = "netlify\/functions"/);
+  assert.ok(!/NORTHSTAR_/.test(toml), 'configuration belongs in the Netlify UI, never in the repository');
+  const fn = readFileSync(new URL('../netlify/functions/northstar.mjs', import.meta.url), 'utf8');
+  assert.match(fn, /from '\.\.\/\.\.\/functions\/handler\.js'/);
+  assert.match(fn, /path: '\/\*'/);
+  assert.ok(readFileSync(new URL('../public/robots.txt', import.meta.url), 'utf8').includes('Disallow: /'));
+  // The function really serves all three hosts of a configured site (simulated Netlify call).
+  const mod = await import('../netlify/functions/northstar.mjs');
+  const env = {
+    NORTHSTAR_ENABLED: 'true', NORTHSTAR_ENVIRONMENT: 'staging', NORTHSTAR_ROOT_DOMAIN: 'example.com', NORTHSTAR_TOKEN_SIGNING_KEY: 'n'.repeat(40),
+    NORTHSTAR_PARENT_ORIGIN: 'https://northstar-parent.example.com', NORTHSTAR_WIDGET_ORIGIN: 'https://northstar-widget.example.com', NORTHSTAR_VERIFY_ORIGIN: 'https://northstar-verify.example.com',
+  };
+  Object.assign(process.env, env);
+  try {
+    for (const [role, host] of [['parent', 'northstar-parent'], ['widget', 'northstar-widget'], ['verify', 'northstar-verify']]) {
+      const r = await mod.default(new Request(`https://${host}.example.com/healthz`));
+      assert.deepEqual(await r.json(), { status: 'ok', role });
+    }
+    assert.equal((await mod.default(new Request('https://northstar-lab.netlify.app/healthz'))).status, 421, 'the *.netlify.app address is not a lab host');
+  } finally { for (const k of Object.keys(env)) delete process.env[k]; }
 });

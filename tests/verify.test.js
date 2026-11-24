@@ -31,7 +31,7 @@ test('preflight: allowed only for the parent origin and the step method', async 
     const ok = await pre(lab.origins.parent, 'POST');
     assert.equal(ok.status, 204);
     assert.equal(ok.headers['access-control-allow-methods'], 'GET, POST');
-    assert.equal(ok.headers['access-control-allow-headers'], 'content-type');
+    assert.equal(ok.headers['access-control-allow-headers'], 'content-type, x-northstar-proof');
     assert.equal((await pre(lab.origins.parent, 'DELETE')).status, 403);
     assert.equal((await pre('https://attacker.example', 'POST')).status, 403);
   });
