@@ -17,8 +17,17 @@ const platform = (positionals[0] || '').toLowerCase();
 if (!['vercel', 'netlify', 'cloudflare', 'node'].includes(platform)) {
   console.error('Usage: npm run prepare-deploy -- vercel|netlify|cloudflare|node'); process.exit(1);
 }
-const envPath = join(ROOT, a['env-file']);
-if (!existsSync(envPath)) { console.error(`${a['env-file']} not found. Run: npm run plan -- --root-domain <ROOT_DOMAIN> first.`); process.exit(1); }
+let envPath = join(ROOT, a['env-file']);
+if (!existsSync(envPath)) {
+  const fallback = join(ROOT, 'configuration', 'local.env');
+  if (a['env-file'] === 'configuration/deploy.env' && existsSync(fallback)) {
+    console.error('Note: configuration/deploy.env not found; using configuration/local.env template (run "npm run plan -- --root-domain <ROOT_DOMAIN>" before external deployment).');
+    envPath = fallback;
+  } else {
+    console.error(`${a['env-file']} not found. Run: npm run plan -- --root-domain <ROOT_DOMAIN> first.`);
+    process.exit(1);
+  }
+}
 const env = readEnvFile(envPath);
 const publicVars = Object.entries(env).filter(([k]) => k.startsWith('NORTHSTAR_') && !/SECRET|SIGNING|AUTHORITY|PASSWORD|PRIVATE/i.test(k));
 // The three role hostnames (the only hostname authority).
@@ -58,9 +67,24 @@ if (platform === 'vercel') {
   copy('deployment/adapters/netlify/netlify.toml', 'netlify.toml');
   mkdirSync(join(out, 'public'));
   writeFileSync(join(out, 'public', 'robots.txt'), 'User-agent: *\nDisallow: /\n');
+  writeFileSync(
+    join(out, 'package.json'),
+    JSON.stringify(
+      {
+        name: a.name,
+        private: true,
+        type: 'module',
+        engines: { node: '>=22' },
+        dependencies: { '@netlify/blobs': '^10.0.0 || ^11.0.0' },
+      },
+      null,
+      2,
+    ) + '\n',
+  );
   steps.push(`cd dist/netlify`, `netlify link   # or: netlify sites:create --name ${a.name}`,
     ...publicVars.map(([k, v]) => `netlify env:set ${k} "${v}"`),
     `${KEYGEN}   # then: Site configuration > Environment variables > NORTHSTAR_TOKEN_SIGNING_KEY, tick "Contains secret values"`,
+    `${KEYGEN}   # required for RemoteFixtureServer (/api/runs, /api/evidence): NORTHSTAR_MANAGEMENT_AUTHORITY, tick "Contains secret values"`,
     `Add the three hostnames as domain aliases (Site configuration > Domain management): ${hosts.join(', ')}`,
     'netlify deploy --prod   # ONLY after external deployment is approved');
 } else if (platform === 'cloudflare') {

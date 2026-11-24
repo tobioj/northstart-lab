@@ -13,6 +13,41 @@
   // Scenario completion: input -> verify -> settle on the verification origin, then continue.
   // No cookies, no storage; the token is already part of this page's URL.
   var scenario = document.getElementById('scenario');
+  if (scenario && scenario.getAttribute('data-oracle') === 'true') {
+    var oVerify = scenario.getAttribute('data-verify');
+    var oToken = scenario.getAttribute('data-token');
+    var oComplete = scenario.getAttribute('data-complete');
+    if (oVerify && oToken && oComplete) {
+      var poll = setInterval(function () {
+        fetch(oVerify + '/api/status/' + encodeURIComponent(oToken), {
+          method: 'GET',
+          mode: 'cors',
+          credentials: 'omit',
+          cache: 'no-store',
+          referrerPolicy: 'strict-origin',
+        })
+          .then(function (r) { return r.ok ? r.json() : null; })
+          .then(function (s) {
+            if (s && (s.state === 'settled' || s.state === 'complete')) {
+              clearInterval(poll);
+              say('Scenario settled');
+              window.location.replace(oComplete);
+            }
+          })
+          .catch(function () {});
+      }, 200);
+    }
+    return;
+  }
+
+  var completeNotice = document.getElementById('continuation');
+  if (completeNotice) {
+    var recurUrl = completeNotice.getAttribute('data-recur-url');
+    if (recurUrl) {
+      setTimeout(function () { window.location.replace(recurUrl); }, 350);
+    }
+  }
+
   var complete = document.getElementById('complete-button');
   if (!scenario || !complete) return;
   var verify = scenario.getAttribute('data-verify');

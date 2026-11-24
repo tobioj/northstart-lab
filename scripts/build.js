@@ -59,6 +59,8 @@ export function build({ quiet = false } = {}) {
     ASSETS: {
       '/assets/site.css': { type: 'text/css; charset=utf-8', body: shared('site.css') },
       '/assets/page.js': { type: 'text/javascript; charset=utf-8', body: shared('page.js') },
+      '/assets/widget.css': { type: 'text/css; charset=utf-8', body: shared('widget.css') },
+      '/assets/widget.js': { type: 'text/javascript; charset=utf-8', body: shared('widget.js') },
     },
   };
 

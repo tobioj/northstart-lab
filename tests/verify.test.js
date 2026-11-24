@@ -6,15 +6,17 @@ import { INTERNAL_LANES } from './harness/suite.js';
 
 const AUTH = 'management-authority-for-tests-'.padEnd(40, 'm');
 
-test('scenario endpoints accept only the configured parent origin (explicit CORS, never wildcard, no credentials)', async () => {
+test('scenario endpoints accept only configured parent or widget origins (explicit CORS, never wildcard, no credentials)', async () => {
   await withLab(async (lab) => {
     const token = await lab.issue('datadome');
-    const ok = await lab.api('status', token);
-    assert.equal(ok.status, 200);
-    assert.equal(ok.headers['access-control-allow-origin'], lab.origins.parent);
-    assert.equal(ok.headers['access-control-allow-credentials'], undefined);
-    assert.match(ok.headers.vary, /Origin/);
-    for (const origin of [lab.origins.widget, lab.origins.verify, 'https://attacker.example', 'null', '*']) {
+    for (const allowedOrigin of [lab.origins.parent, lab.origins.widget]) {
+      const ok = await lab.api('status', token, { headers: { origin: allowedOrigin } });
+      assert.equal(ok.status, 200, allowedOrigin);
+      assert.equal(ok.headers['access-control-allow-origin'], allowedOrigin);
+      assert.equal(ok.headers['access-control-allow-credentials'], undefined);
+      assert.match(ok.headers.vary, /Origin/);
+    }
+    for (const origin of [lab.origins.verify, 'https://attacker.example', 'null', '*']) {
       const r = await lab.api('status', token, { headers: { origin } });
       assert.equal(r.status, 403, origin);
       assert.equal(r.headers['access-control-allow-origin'], undefined);
@@ -24,15 +26,19 @@ test('scenario endpoints accept only the configured parent origin (explicit CORS
   });
 });
 
-test('preflight: allowed only for the parent origin and the step method', async () => {
+test('preflight: allowed only for parent or widget origin and the step method', async () => {
   await withLab(async (lab) => {
     const token = await lab.issue('datadome');
     const pre = (origin, method) => lab.verify(`/api/input/${token}`, { method: 'OPTIONS', headers: { origin, 'access-control-request-method': method } });
-    const ok = await pre(lab.origins.parent, 'POST');
-    assert.equal(ok.status, 204);
-    assert.equal(ok.headers['access-control-allow-methods'], 'GET, POST');
-    assert.equal(ok.headers['access-control-allow-headers'], 'content-type, x-northstar-proof');
+    for (const allowedOrigin of [lab.origins.parent, lab.origins.widget]) {
+      const ok = await pre(allowedOrigin, 'POST');
+      assert.equal(ok.status, 204, allowedOrigin);
+      assert.equal(ok.headers['access-control-allow-origin'], allowedOrigin);
+      assert.equal(ok.headers['access-control-allow-methods'], 'GET, POST');
+      assert.equal(ok.headers['access-control-allow-headers'], 'content-type, x-northstar-proof');
+    }
     assert.equal((await pre(lab.origins.parent, 'DELETE')).status, 403);
+    assert.equal((await pre(lab.origins.widget, 'DELETE')).status, 403);
     assert.equal((await pre('https://attacker.example', 'POST')).status, 403);
   });
 });

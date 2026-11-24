@@ -24,15 +24,16 @@ Site configuration → **Environment variables → Add a variable**. Use the sam
 | `NORTHSTAR_VERIFY_ORIGIN` | `https://northstar-verify.<ROOT_DOMAIN>` | no |
 | `NORTHSTAR_TOKEN_TTL` | `900` | no |
 | `NORTHSTAR_REAL_WIDGETS` | `false` | no |
-| `NORTHSTAR_TOKEN_SIGNING_KEY` | a random value you generate (below) | **YES** |
+| `NORTHSTAR_TOKEN_SIGNING_KEY` | a random value you generate (below, ≥ 32 chars) | **YES** |
+| `NORTHSTAR_MANAGEMENT_AUTHORITY` | a separate random value you generate (below, ≥ 32 chars) — **required** for `RemoteFixtureServer` (`POST /api/runs`, `GET /api/evidence/{token}`, `POST /api/reset/{token}`) | **YES** |
 
-**Generate the signing key on your own PC** (PowerShell) and paste it straight into Netlify. Mark it **"Contains secret values"**. Don't send it to anyone, and don't put it in a file or in Git:
+**Generate both keys on your own PC** (PowerShell, run twice for two distinct secrets) and paste each straight into Netlify. Mark both **"Contains secret values"**. Don't send them to anyone, and don't put them in a file or in Git:
 
 ```powershell
 node -e "console.log(require('crypto').randomBytes(32).toString('base64url'))"
 ```
 
-Optional: `NORTHSTAR_MANAGEMENT_AUTHORITY`, same way and also secret. Leave it unset to keep the management endpoints off.
+Leave `NORTHSTAR_MANAGEMENT_AUTHORITY` unset only if you want management and `RemoteFixtureServer` endpoints disabled (`404`).
 
 ## 3. Add the three custom domains
 Site configuration → **Domain management → Add a domain alias** (or *Add custom domain*), one at a time:
@@ -82,5 +83,5 @@ Then click **Complete scenario** on any lane. It should end on "Scenario complet
 Follow [cloudflare-waf.md](cloudflare-waf.md): switch `northstar-parent` to **Proxied**, add the Configuration Rule, then add the WAF rule as a draft and enable it after `healthz` works through the proxy.
 
 ## Notes
-- **Serverless state.** Netlify may run each request on a different function instance. Completion progress is carried between steps in signed proofs, so this works. The one thing instance-local state can't do is revocation, which is best-effort. To invalidate everything, rotate `NORTHSTAR_TOKEN_SIGNING_KEY` and redeploy.
+- **Strong-consistency serverless state (Netlify Blobs).** Netlify may run consecutive requests (`POST /api/runs`, multi-step Vision `POST /api/input|verify|settle`, `GET /complete/{token}`, and `GET /api/evidence/{token}`) on different function instances. The Netlify adapter automatically uses `@netlify/blobs` (`getStore({ name: 'northstar-state', consistency: 'strong' })`) in Netlify's runtime so oracle state and revocation are read-after-write consistent across instances, while falling back cleanly to `MemoryStore` locally. Legacy 14-lane flows also continue to carry signed stateless progress proofs (`x-northstar-proof` / `?p=...`). To invalidate all active tokens immediately, rotate `NORTHSTAR_TOKEN_SIGNING_KEY` and redeploy.
 - **Rollback.** Set `NORTHSTAR_ENABLED=false` and redeploy (about a minute), or use Netlify's *Deploys → Publish deploy* on an earlier build. Full details are in [rollback.md](rollback.md).

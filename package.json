@@ -17,6 +17,8 @@
     "prepare-deploy": "node scripts/prepare-deploy.js",
     "verify-deployment": "node scripts/verify-deployment.js"
   },
-  "dependencies": {},
+  "dependencies": {
+    "@netlify/blobs": "^10.0.0 || ^11.0.0"
+  },
   "devDependencies": {}
 }

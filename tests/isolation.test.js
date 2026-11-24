@@ -5,7 +5,15 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 
 const read = (p) => readFileSync(new URL(p, import.meta.url), 'utf8');
-const DEPLOYABLE = ['../functions/handler.js', '../functions/render.js', '../functions/tokens.js', '../functions/state.js', '../configuration/config.js', '../functions/generated/data.js'];
+const DEPLOYABLE = [
+  '../functions/handler.js',
+  '../functions/render.js',
+  '../functions/tokens.js',
+  '../functions/state.js',
+  '../functions/oracle.js',
+  '../configuration/config.js',
+  '../functions/generated/data.js',
+];
 
 test('deployable modules import nothing but each other (no fs, net, db, child_process)', () => {
   for (const f of DEPLOYABLE) {
@@ -19,9 +27,9 @@ test('deployable modules import nothing but each other (no fs, net, db, child_pr
   }
 });
 
-test('no runtime or dev dependencies (nothing to install, nothing to compromise)', () => {
+test('runtime dependencies are restricted strictly to @netlify/blobs and zero devDependencies', () => {
   const pkg = JSON.parse(read('../package.json'));
-  assert.deepEqual(pkg.dependencies, {});
+  assert.deepEqual(Object.keys(pkg.dependencies || {}), ['@netlify/blobs']);
   assert.deepEqual(pkg.devDependencies, {});
 });
 
@@ -37,11 +45,13 @@ test('the only absolute external URLs in deployable code are the opt-in widget l
   }
 });
 
-test('page scripts never touch cookies or browser storage, and hardcode no origin', () => {
-  const js = read('../pages/shared/page.js');
-  assert.ok(!/localStorage|sessionStorage|indexedDB|document\.cookie/.test(js));
-  assert.ok(!/https?:\/\//.test(js), 'page script hardcodes an origin');
-  assert.match(js, /credentials: 'omit'/);
+test('page and widget scripts never touch cookies or browser storage, and hardcode no origin', () => {
+  for (const rel of ['../pages/shared/page.js', '../pages/shared/widget.js']) {
+    const js = read(rel);
+    assert.ok(!/localStorage|sessionStorage|indexedDB|document\.cookie/.test(js), rel);
+    assert.ok(!/https?:\/\//.test(js), `${rel} hardcodes an origin`);
+    assert.match(js, /credentials: 'omit'/, rel);
+  }
 });
 
 test('real provider widgets are off by default (controlled fixtures on the widget origin)', () => {

@@ -1,30 +1,59 @@
 // Platform-neutral Northstar Lab request handler for the three role origins.
-// Signature: handleRequest(request: Request, env: object, ctx?: {store, onEvidence, now}) => Promise<Response>
+// Signature: handleRequest(request: Request, env: object, ctx?: {store, onEvidence, now, nowMs}) => Promise<Response>
 // Adapters (Node, Vercel, Netlify, Cloudflare) only translate in/out of this function.
 // No filesystem, database, cookies, storage or logging of configuration values.
 //
 //   parent  /                                  start page
 //           /scenario/{route}                  issue a fresh token -> 303 /scenario/{route}/{token}
 //           /scenario/{route}/{token}          scenario page (lane status + headers on this document only)
-//           /continue/{token}                  clean continuation page
-//   widget  /widget/{route}/{token}/{path}     fixture frame      (framable only by the parent origin)
+//           /continue/{token}                  clean continuation page (legacy + stateless proof flow)
+//           /complete/{token}                  gated post-settlement continuation page (#continuation)
+//   widget  /widget/{route}/{token}/{path}     fixture or interactive oracle frame (framable only by parent)
 //           /resources/{route}/{token}/{path}  fixture script
-//           /images/{route}/{token}/{path}     fixture image
-//   verify  /api/input|verify|settle/{token}   POST, CORS for the parent origin only
-//           /api/status/{token}                GET,  CORS for the parent origin only
-//           /api/manage/instances              GET list / POST issue   (bearer; never CORS)
-//           /api/manage/revoke/{token}         POST                    (bearer; never CORS)
+//           /images/{route}/{token}/{path}     fixture image or deterministic puzzle SVG
+//   verify  /api/input|verify|settle/{token}   POST, CORS for parent or widget origin (never wildcard)
+//           /api/status/{token}                GET,  CORS for parent or widget origin (never wildcard)
+//           /api/runs                          POST issue seeded oracle run      (bearer; never CORS)
+//           /api/evidence/{token}              GET oracle/run evidence JSON      (bearer; never CORS)
+//           /api/reset/{token}                 POST reset/revoke run instance    (bearer; never CORS)
+//           /api/manage/instances              GET list / POST issue             (bearer; never CORS)
+//           /api/manage/revoke/{token}         POST                              (bearer; never CORS)
 //   all     /healthz /readyz /fixture-manifest.json /robots.txt
 import { BUILD, LANES, PAGES, TEMPLATES, ASSETS } from './generated/data.js';
 import { loadConfig, laneReadiness, configFingerprint, sha256 } from '../configuration/config.js';
-import { renderParentPage, contentSecurityPolicy } from './render.js';
-import { issueToken, verifyToken, signText, secretEquals, nowSeconds, b64url, makeProof, readProof } from './tokens.js';
+import {
+  renderParentPage,
+  renderOracleParentPage,
+  renderOracleWidgetFrame,
+  renderCompletePage,
+  contentSecurityPolicy,
+} from './render.js';
+import {
+  issueToken,
+  verifyToken,
+  signText,
+  secretEquals,
+  nowSeconds,
+  b64url,
+  makeProof,
+  readProof,
+} from './tokens.js';
 import { MemoryStore, newRecord, STATES } from './state.js';
+import {
+  ORACLE_SPINNER_MS,
+  resolveOracleScenario,
+  normalizeSeed,
+  createOracleRecord,
+  recordOracleInput,
+  verifyOracleSubmission,
+  renderPuzzleSvg,
+  buildOracleEvidence,
+} from './oracle.js';
 
 const FIXTURE_SCRIPT = '/* Northstar controlled fixture resource. Intentionally inert. */\n';
 const MAX_BODY = 1024;
 const ENDPOINTS = {
-  parent: ['/', '/scenario/{lane}', '/scenario/{lane}/{token}', '/continue/{token}', '/healthz', '/readyz', '/fixture-manifest.json'],
+  parent: ['/', '/scenario/{lane}', '/scenario/{lane}/{token}', '/continue/{token}', '/complete/{token}', '/healthz', '/readyz', '/fixture-manifest.json'],
   widget: ['/widget/{lane}/{token}/{path}', '/resources/{lane}/{token}/{path}', '/images/{lane}/{token}/{path}', '/healthz', '/readyz', '/fixture-manifest.json'],
   verify: ['/api/input/{token}', '/api/verify/{token}', '/api/settle/{token}', '/api/status/{token}', '/healthz', '/readyz', '/fixture-manifest.json'],
 };
@@ -83,6 +112,19 @@ function fromParent(request, config) {
   return Boolean(referer) && originOf(referer) === config.origins.parent;
 }
 
+/** For puzzle SVG images loaded inside widget iframes, accept either parent or widget Referer/Origin. */
+function fromParentOrWidget(request, config) {
+  const origin = request.headers.get('origin');
+  if (origin) {
+    const lowered = origin.toLowerCase();
+    return lowered === config.origins.parent || lowered === config.origins.widget;
+  }
+  const referer = request.headers.get('referer');
+  if (!referer) return false;
+  const refOrigin = originOf(referer);
+  return refOrigin === config.origins.parent || refOrigin === config.origins.widget;
+}
+
 function laneUrls(config, laneId, token, { realWidget }) {
   const lane = LANES[laneId];
   if (realWidget) return {};
@@ -92,6 +134,15 @@ function laneUrls(config, laneId, token, { realWidget }) {
     frames: lane.fixture.frames.map((p) => base('widget') + p),
     images: lane.fixture.images.map((p) => base('images') + p),
     frameSize: lane.fixture.frameSize || null,
+  };
+}
+
+function oracleWidgetUrls(config, spec, token) {
+  const base = (kind) => `${config.origins.widget}/${kind}/${spec.route}/${token}/`;
+  return {
+    scripts: (spec.resources || []).map((p) => base('resources') + p),
+    frames: spec.framePath ? [base('widget') + spec.framePath] : [],
+    images: [],
   };
 }
 
@@ -108,14 +159,53 @@ function tokenFailure(reason, headers) {
 }
 
 /**
- * Current record for a token instance: the instance-local store, advanced by a valid signed
- * progress proof when the request carries one (so steps may land on different instances).
+ * Current record for a token instance: the store record, advanced by a valid signed
+ * progress proof when the request carries one (so legacy steps may land on different instances).
  */
 async function recordFor(ctx, t, proof = null) {
   let rec = await ctx.store.get(t.id);
   const p = proof ? await readProof(ctx.config, t.id, proof) : null;
-  if (p && (!rec || STATES.indexOf(p.state) > STATES.indexOf(rec.state))) rec = { ...newRecord(t), ...p };
+  if (p && (!rec || (rec.mode !== 'oracle' && STATES.indexOf(p.state) > STATES.indexOf(rec.state)))) {
+    rec = { ...newRecord(t), ...p };
+  }
   return rec || newRecord(t);
+}
+
+async function settleReceipt(config, record, t) {
+  const body = {
+    receipt: `nsr_${b64url(globalThis.crypto.getRandomValues(new Uint8Array(12)))}`,
+    lane: t.code,
+    instance: (await sha256(t.id)).slice(0, 16),
+    steps: record.steps,
+    build: BUILD.id,
+    environment: config.environment,
+    ...(record.run_id ? { run_id: record.run_id, scenario: record.scenario } : {}),
+  };
+  return { ...body, signature: await signText(config, JSON.stringify(body)) };
+}
+
+async function settleRecord(ctx, record, t) {
+  const { config, now, nowMs } = ctx;
+  const settledIso = new Date(nowMs).toISOString();
+  record.state = 'settled';
+  record.steps = { ...record.steps, settled: settledIso };
+  record.receipt = await settleReceipt(config, record, t);
+  if (record.mode === 'oracle') {
+    record.settlement = { settled: true, at: settledIso, receipt: record.receipt };
+  }
+  if (ctx.onEvidence) {
+    try {
+      await ctx.onEvidence({
+        type: 'receipt',
+        laneId: t.laneId,
+        route: LANES[t.laneId].route,
+        instance: record.receipt.instance,
+        receipt: record.receipt,
+      });
+    } catch { /* evidence is best effort */ }
+  }
+  await ctx.store.put(t.id, record, now);
+  return record;
 }
 
 // ---------------------------------------------------------------- parent origin
@@ -147,6 +237,23 @@ async function parentRoute(ctx) {
     const record = await ctx.store.get(t.id);
     if (record && record.state === 'revoked') return json(410, { status: 'revoked' });
 
+    if (record && record.mode === 'oracle') {
+      const spec = resolveOracleScenario(record.scenario);
+      if (!spec) return notFound();
+      if (spec.autoComplete && !record.receipt) {
+        record.continuation_reached = true;
+        await settleRecord(ctx, record, t);
+      }
+      const widgetUrls = oracleWidgetUrls(config, spec, parts[2]);
+      const usesWidget = Object.values(widgetUrls).some((l) => l.length);
+      const html = renderOracleParentPage({ origins: config.origins, spec, token: parts[2], widgetUrls });
+      return respond(spec.status, html, 'text/html; charset=utf-8', {
+        ...pageCsp({ usesWidget, usesVerify: true }),
+        'cross-origin-opener-policy': 'same-origin',
+        ...(spec.headers || {}),
+      });
+    }
+
     const lane = LANES[laneId];
     const realWidget = config.realWidgets && lane.widget ? { kind: lane.widget.kind, siteKey: config.siteKeys[laneId] } : null;
     const widgetUrls = laneUrls(config, laneId, parts[2], { realWidget });
@@ -170,8 +277,36 @@ async function parentRoute(ctx) {
     const t = await tokenFor(config, parts[1], null, now);
     if (!t.ok) return tokenFailure(t.reason);
     const record = await recordFor(ctx, t, url.searchParams.get('p'));
+    if (record.state === 'settled' && !record.continuation_reached) {
+      record.continuation_reached = true;
+      await ctx.store.put(t.id, record, now);
+    }
     const state = record.state === 'settled' ? 'Scenario complete' : 'Scenario not complete';
     return respond(200, renderParentPage({ ...common, page: PAGES.continue, status: state }), 'text/html; charset=utf-8', {
+      ...pageCsp({}), 'cross-origin-opener-policy': 'same-origin',
+    });
+  }
+
+  if (parts[0] === 'complete' && parts.length === 2) {
+    const t = await tokenFor(config, parts[1], null, now);
+    if (!t.ok) return tokenFailure(t.reason);
+    const record = await ctx.store.get(t.id);
+    if (!record) return json(409, { status: 'pending', reason: 'not_settled' });
+    if (record.state === 'revoked') return json(410, { status: 'revoked' });
+    if (record.state !== 'settled' || !record.receipt) {
+      return json(409, { status: 'pending', state: record.state });
+    }
+    record.continuation_reached = true;
+    let recurUrl = null;
+    if (record.mode === 'oracle' && record.scenario === 'recurrence') {
+      recurUrl = `${config.origins.parent}/scenario/${record.provider_lane}/${parts[1]}`;
+      record.prior_receipts = [...(record.prior_receipts || []), record.receipt];
+      record.receipt = null;
+      record.state = 'issued';
+      record.generation = (record.generation || 0) + 1;
+    }
+    await ctx.store.put(t.id, record, now);
+    return respond(200, renderCompletePage({ recurUrl }), 'text/html; charset=utf-8', {
       ...pageCsp({}), 'cross-origin-opener-policy': 'same-origin',
     });
   }
@@ -193,19 +328,51 @@ async function widgetRoute(ctx) {
   const laneId = config.laneByRoute.get(parts[1]);
   if (!laneId) return notFound();
   const lane = LANES[laneId];
-  // 2. allowed path: exact match (path and query) against this lane's declared fixture paths
   const rest = parts.slice(3).join('/') + url.search;
-  if (!lane.fixture[kind].includes(rest)) return notFound();
-  // 3. token valid, unexpired and bound to this lane
+
+  // 2. token valid, unexpired and bound to this lane
   const t = await tokenFor(config, parts[2], laneId, now);
-  if (!t.ok) return tokenFailure(t.reason);
-  // 4. requested by a page on the configured parent origin
-  if (!fromParent(request, config)) return text(403, 'Forbidden\n');
-  // 5. fixture state still open
+  if (!t.ok) {
+    if (!lane.fixture[kind].includes(rest) && rest !== 'puzzle.svg') return notFound();
+    return tokenFailure(t.reason);
+  }
+
   const record = await ctx.store.get(t.id);
+  const corp = { 'cross-origin-resource-policy': 'same-site' };
+
+  // Oracle interactive widget / puzzle / resource paths.
+  if (record && record.mode === 'oracle') {
+    const spec = resolveOracleScenario(record.scenario);
+    if (!spec) return notFound();
+    if (record.state === 'settled' || record.state === 'revoked') {
+      if (spec.widget !== 'passive') return json(410, { status: 'closed' });
+    }
+    if (kind === 'frames') {
+      if (rest !== spec.framePath) return notFound();
+      if (!fromParent(request, config)) return text(403, 'Forbidden\n');
+      const cspKind = spec.widget === 'passive' ? 'widget-frame' : 'oracle-widget-frame';
+      return respond(200, renderOracleWidgetFrame({ origins: config.origins, record, token: parts[2] }), 'text/html; charset=utf-8', {
+        ...securityHeaders(contentSecurityPolicy(cspKind, { origins: config.origins }), { framable: true }),
+      });
+    }
+    if (kind === 'images') {
+      if (rest !== 'puzzle.svg' || !['grid3', 'grid4', 'slider'].includes(record.widget)) return notFound();
+      if (!fromParentOrWidget(request, config)) return text(403, 'Forbidden\n');
+      return respond(200, renderPuzzleSvg(record.expected), 'image/svg+xml', { ...LOCKED(), ...corp });
+    }
+    if (kind === 'resources') {
+      if (!(spec.resources || []).includes(rest)) return notFound();
+      if (!fromParent(request, config)) return text(403, 'Forbidden\n');
+      return respond(200, FIXTURE_SCRIPT, 'text/javascript; charset=utf-8', { ...LOCKED(), ...corp });
+    }
+    return notFound();
+  }
+
+  // Legacy 14-lane fixture paths (strict exact match & parent-origin only).
+  if (!lane.fixture[kind].includes(rest)) return notFound();
+  if (!fromParent(request, config)) return text(403, 'Forbidden\n');
   if (record && (record.state === 'settled' || record.state === 'revoked')) return json(410, { status: 'closed' });
 
-  const corp = { 'cross-origin-resource-policy': 'same-site' };
   if (kind === 'frames') {
     return respond(200, TEMPLATES.frame, 'text/html; charset=utf-8', {
       ...securityHeaders(contentSecurityPolicy('widget-frame', { origins: config.origins }), { framable: true }),
@@ -219,9 +386,11 @@ async function widgetRoute(ctx) {
 
 function corsFor(request, config) {
   const origin = request.headers.get('origin');
-  if (!origin || origin.toLowerCase() !== config.origins.parent) return null;
+  if (!origin) return null;
+  const lowered = origin.toLowerCase();
+  if (lowered !== config.origins.parent && lowered !== config.origins.widget) return null;
   return {
-    'access-control-allow-origin': config.origins.parent,
+    'access-control-allow-origin': lowered,
     'access-control-allow-methods': 'GET, POST',
     'access-control-allow-headers': 'content-type, x-northstar-proof',
     'access-control-max-age': '600',
@@ -229,10 +398,11 @@ function corsFor(request, config) {
   };
 }
 
-async function readJson(request) {
+async function readJson(request, { allowEmpty = false } = {}) {
+  const buf = await request.arrayBuffer();
+  if (buf.byteLength === 0 && allowEmpty) return { value: {} };
   const type = (request.headers.get('content-type') || '').toLowerCase();
   if (!type.startsWith('application/json')) return { error: 'content-type must be application/json' };
-  const buf = await request.arrayBuffer();
   if (buf.byteLength > MAX_BODY) return { error: 'body too large' };
   try { return { value: JSON.parse(new TextDecoder().decode(buf)) }; } catch { return { error: 'invalid JSON' }; }
 }
@@ -247,18 +417,6 @@ async function publicState(config, record, t) {
   };
 }
 
-async function settleReceipt(config, record, t) {
-  const body = {
-    receipt: `nsr_${b64url(globalThis.crypto.getRandomValues(new Uint8Array(12)))}`,
-    lane: t.code,
-    instance: (await sha256(t.id)).slice(0, 16),
-    steps: record.steps,
-    build: BUILD.id,
-    environment: config.environment,
-  };
-  return { ...body, signature: await signText(config, JSON.stringify(body)) };
-}
-
 const SCENARIO_STEPS = {
   input: { method: 'POST', from: ['issued'], to: 'input' },
   verify: { method: 'POST', from: ['input'], to: 'verified' },
@@ -266,15 +424,29 @@ const SCENARIO_STEPS = {
   status: { method: 'GET', from: null, to: null },
 };
 
+async function authorizeManagement(ctx) {
+  const { config, method, request } = ctx;
+  // Management is never exposed to browsers (no CORS) and is disabled unless an authority is configured.
+  if (!config.managementAuthority) return { ok: false, response: notFound() };
+  if (request.headers.get('origin') || method === 'OPTIONS') return { ok: false, response: json(403, { status: 'forbidden' }) };
+  const auth = request.headers.get('authorization') || '';
+  const presented = auth.startsWith('Bearer ') ? auth.slice(7) : '';
+  if (!(await secretEquals(presented, config.managementAuthority))) {
+    return { ok: false, response: json(401, { status: 'unauthorized' }, { ...LOCKED(), 'www-authenticate': 'Bearer' }) };
+  }
+  return { ok: true };
+}
+
 async function verifyRoute(ctx) {
-  const { config, parts, method, request, now } = ctx;
+  const { config, parts, method, request, now, nowMs } = ctx;
   if (parts[0] !== 'api') return notFound();
   if (parts[1] === 'manage') return manageRoute(ctx);
+  if (parts[1] === 'runs' || parts[1] === 'evidence' || parts[1] === 'reset') return oracleManageRoute(ctx);
 
   const step = SCENARIO_STEPS[parts[1]];
   if (!step || parts.length !== 3) return notFound();
   const cors = corsFor(request, config);
-  // Only pages on the configured parent origin may call scenario endpoints.
+  // Only pages on the configured parent or widget origin may call scenario endpoints.
   if (!cors) return json(403, { status: 'forbidden' });
   const headers = { ...LOCKED(), ...cors };
   if (method === 'OPTIONS') {
@@ -292,6 +464,44 @@ async function verifyRoute(ctx) {
 
   if (parts[1] === 'status') return json(200, await publicState(config, record, t), headers);
 
+  // Interactive & spinner oracle handling (strict isTrusted / coordinate / dwell / drag verification).
+  if (record.mode === 'oracle') {
+    const reqOrigin = (request.headers.get('origin') || '').toLowerCase();
+    if (reqOrigin !== config.origins.widget) {
+      return json(403, { status: 'forbidden', reason: 'widget_origin_required' }, headers);
+    }
+    if (parts[1] === 'input') {
+      const body = await readJson(request);
+      if (body.error) return json(400, { status: 'bad_request', reason: body.error }, headers);
+      const outcome = recordOracleInput(record, body.value, nowMs);
+      if (outcome.error) return json(outcome.status || 400, { status: 'rejected', reason: outcome.error }, headers);
+      await ctx.store.put(t.id, record, now);
+      return json(200, outcome.result, headers);
+    }
+    if (parts[1] === 'verify') {
+      const body = await readJson(request, { allowEmpty: true });
+      if (body.error) return json(400, { status: 'bad_request', reason: body.error }, headers);
+      const outcome = verifyOracleSubmission(record, body.value || {}, nowMs);
+      if (outcome.error) return json(outcome.status || 409, { status: 'conflict', reason: outcome.error, state: record.state }, headers);
+      await ctx.store.put(t.id, record, now);
+      return json(200, outcome.result, headers);
+    }
+    if (parts[1] === 'settle') {
+      if (record.widget === 'spinner') {
+        if (record.state !== 'issued') return json(409, { status: 'conflict', state: record.state }, headers);
+        if (nowMs - record.created_at_ms < ORACLE_SPINNER_MS) {
+          return json(409, { status: 'pending', reason: 'automatic_proof_not_settled', state: record.state }, headers);
+        }
+        await settleRecord(ctx, record, t);
+        return json(200, { ...(await publicState(config, record, t)), accepted: true }, headers);
+      }
+      if (record.state !== 'verified') return json(409, { status: 'conflict', state: record.state }, headers);
+      await settleRecord(ctx, record, t);
+      return json(200, { ...(await publicState(config, record, t)), accepted: true }, headers);
+    }
+  }
+
+  // Legacy 14-lane sequential state machine + stateless signed progress proofs.
   if (!step.from.includes(record.state)) return json(409, { status: 'conflict', state: record.state }, headers);
   if (parts[1] === 'input') {
     const body = await readJson(request);
@@ -302,28 +512,94 @@ async function verifyRoute(ctx) {
     }
     record.input = 'acknowledged';
   }
-  record.state = step.to;
-  record.steps = { ...record.steps, [step.to]: new Date(now * 1000).toISOString() };
   if (step.to === 'settled') {
-    record.receipt = await settleReceipt(config, record, t);
-    if (ctx.onEvidence) {
-      try { await ctx.onEvidence({ type: 'receipt', laneId: t.laneId, route: LANES[t.laneId].route, instance: record.receipt.instance, receipt: record.receipt }); } catch { /* evidence is best effort */ }
-    }
+    await settleRecord(ctx, record, t);
+    return json(200, await publicState(config, record, t), headers);
   }
+  record.state = step.to;
+  record.steps = { ...record.steps, [step.to]: new Date(nowMs).toISOString() };
   await ctx.store.put(t.id, record, now);
   return json(200, await publicState(config, record, t), headers);
 }
 
-async function manageRoute(ctx) {
-  const { config, parts, method, request, now } = ctx;
-  // Management is never exposed to browsers (no CORS) and is disabled unless an authority is configured.
-  if (!config.managementAuthority) return notFound();
-  if (request.headers.get('origin') || method === 'OPTIONS') return json(403, { status: 'forbidden' });
-  const auth = request.headers.get('authorization') || '';
-  const presented = auth.startsWith('Bearer ') ? auth.slice(7) : '';
-  if (!(await secretEquals(presented, config.managementAuthority))) {
-    return json(401, { status: 'unauthorized' }, { ...LOCKED(), 'www-authenticate': 'Bearer' });
+async function oracleManageRoute(ctx) {
+  const authCheck = await authorizeManagement(ctx);
+  if (!authCheck.ok) return authCheck.response;
+  const { config, parts, method, request, now, nowMs } = ctx;
+
+  if (parts[1] === 'runs' && parts.length === 2) {
+    if (method !== 'POST') return json(405, { status: 'method_not_allowed' }, { ...LOCKED(), allow: 'POST' });
+    const body = await readJson(request);
+    if (body.error) return json(400, { status: 'bad_request', reason: body.error });
+    const payload = body.value || {};
+    const spec = resolveOracleScenario(payload.scenario);
+    if (!spec) return json(400, { status: 'bad_request', reason: 'unknown scenario' });
+    const seed = normalizeSeed(payload.seed);
+    if (seed === null) return json(400, { status: 'bad_request', reason: 'seed must be an integer' });
+    const ttl = payload.ttl === undefined || payload.ttl === null ? config.tokenTtl : Number(payload.ttl);
+    if (!Number.isFinite(ttl) || ttl < 5 || ttl > 86400) {
+      return json(400, { status: 'bad_request', reason: 'ttl must be between 5 and 86400 seconds' });
+    }
+    const lane = LANES[spec.laneId];
+    const issued = await issueToken(config, lane.code, { now, ttl: Math.floor(ttl) });
+    const record = createOracleRecord(issued, spec, { seed, nowMs });
+    await ctx.store.put(issued.id, record, now);
+    return json(200, {
+      token: issued.token,
+      run_id: record.run_id,
+      scenario: spec.id,
+      provider_lane: spec.route,
+      seed,
+      expiresAt: issued.expiresAt,
+      url: `${config.origins.parent}/scenario/${spec.route}/${issued.token}`,
+    });
   }
+
+  if (parts[1] === 'evidence' && parts.length === 3) {
+    if (method !== 'GET' && method !== 'HEAD') return json(405, { status: 'method_not_allowed' }, { ...LOCKED(), allow: 'GET, HEAD' });
+    const t = await tokenFor(config, parts[2], null, now);
+    if (!t.ok) return tokenFailure(t.reason);
+    const record = await recordFor(ctx, t);
+    return json(200, buildOracleEvidence(record, LANES[t.laneId].route, nowMs));
+  }
+
+  if (parts[1] === 'reset' && parts.length === 3) {
+    if (method !== 'POST') return json(405, { status: 'method_not_allowed' }, { ...LOCKED(), allow: 'POST' });
+    const t = await tokenFor(config, parts[2], null, now);
+    if (!t.ok) return tokenFailure(t.reason);
+    const oldRecord = await recordFor(ctx, t);
+    const previousState = oldRecord.state;
+    oldRecord.state = 'revoked';
+    oldRecord.steps = { ...oldRecord.steps, revoked: new Date(nowMs).toISOString() };
+    await ctx.store.put(t.id, oldRecord, now);
+    if (oldRecord.mode === 'oracle') {
+      const spec = resolveOracleScenario(oldRecord.scenario);
+      if (spec) {
+        const remainingTtl = Math.max(5, Math.min(86400, oldRecord.expiresAt - now));
+        const issued = await issueToken(config, LANES[spec.laneId].code, { now, ttl: remainingTtl });
+        const replacement = createOracleRecord(issued, spec, { seed: oldRecord.seed, nowMs });
+        await ctx.store.put(issued.id, replacement, now);
+        return json(200, {
+          ok: true,
+          reset: true,
+          previous_state: previousState,
+          token: issued.token,
+          run_id: replacement.run_id,
+          scenario: spec.id,
+          url: `${config.origins.parent}/scenario/${spec.route}/${issued.token}`,
+        });
+      }
+    }
+    return json(200, { ok: true, reset: true, previous_state: previousState, status: 'revoked' });
+  }
+
+  return notFound();
+}
+
+async function manageRoute(ctx) {
+  const authCheck = await authorizeManagement(ctx);
+  if (!authCheck.ok) return authCheck.response;
+  const { config, parts, method, request, now, nowMs } = ctx;
 
   if (parts[2] === 'instances' && parts.length === 3) {
     if (method === 'GET') {
@@ -349,7 +625,7 @@ async function manageRoute(ctx) {
     if (!t.ok) return tokenFailure(t.reason);
     const record = await recordFor(ctx, t);
     record.state = 'revoked';
-    record.steps = { ...record.steps, revoked: new Date(now * 1000).toISOString() };
+    record.steps = { ...record.steps, revoked: new Date(nowMs).toISOString() };
     await ctx.store.put(t.id, record, now);
     return json(200, { status: 'revoked' });
   }
@@ -400,7 +676,9 @@ async function route(request, env, ctx) {
   const method = request.method.toUpperCase();
   const parts = splitPath(url.pathname);
   if (!parts) return notFound();
-  const c = { config, role, url, parts, method, request, now: ctx.now ? ctx.now() : nowSeconds(), store: ctx.store || defaultStore, onEvidence: ctx.onEvidence };
+  const now = ctx.now ? ctx.now() : nowSeconds();
+  const nowMs = ctx.nowMs ? ctx.nowMs() : (ctx.now ? now * 1000 : Date.now());
+  const c = { config, role, url, parts, method, request, now, nowMs, store: ctx.store || defaultStore, onEvidence: ctx.onEvidence };
 
   let res = await commonRoute(c);
   if (!res) {

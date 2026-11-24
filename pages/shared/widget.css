@@ -1,0 +1,66 @@
+body {
+  font: 18px system-ui, -apple-system, sans-serif;
+  margin: 20px;
+  background: #ffffff;
+  color: #111111;
+}
+h2 {
+  font-size: 18px;
+  margin: 0 0 12px 0;
+}
+button {
+  cursor: pointer;
+  touch-action: none;
+  font: 16px system-ui, -apple-system, sans-serif;
+}
+.puzzle {
+  position: relative;
+  width: 480px;
+  height: 480px;
+}
+.puzzle img {
+  width: 480px;
+  height: 480px;
+  display: block;
+  user-select: none;
+}
+.tile {
+  position: absolute;
+  background: transparent;
+  border: 2px solid transparent;
+  padding: 0;
+}
+.tile.selected {
+  border: 5px solid #111111;
+  background: rgba(255, 255, 255, 0.65);
+}
+.checkbox {
+  background: rgb(30, 100, 220);
+  color: #ffffff;
+  width: 240px;
+  height: 90px;
+  border: 0;
+}
+.hold,
+.verify {
+  background: rgb(230, 150, 30);
+  color: #111111;
+  width: 240px;
+  height: 70px;
+  border: 0;
+  margin-top: 8px;
+}
+.handle {
+  background: rgb(160, 60, 210);
+  position: absolute;
+  left: 10px;
+  top: 220px;
+  width: 40px;
+  height: 40px;
+  border: 0;
+}
+.status {
+  margin-top: 10px;
+  font-size: 14px;
+  color: #333333;
+}

@@ -88,7 +88,135 @@ export function contentSecurityPolicy(kind, { origins, usesWidget = false, usesV
       'frame-ancestors': [origins.parent],
     });
   }
+  if (kind === 'oracle-widget-frame') {
+    return serialize({
+      'default-src': ["'none'"],
+      'script-src': ["'self'"],
+      'style-src': ["'self'", "'unsafe-inline'"],
+      'img-src': ["'self'"],
+      'connect-src': [origins.verify],
+      'base-uri': ["'none'"],
+      'form-action': ["'none'"],
+      'frame-ancestors': [origins.parent],
+    });
+  }
   return serialize({ 'default-src': ["'none'"], 'frame-ancestors': ["'none'"], 'base-uri': ["'none'"], 'form-action': ["'none'"] });
+}
+
+/**
+ * Render an oracle scenario page on the parent origin.
+ */
+export function renderOracleParentPage({ origins, spec, token, widgetUrls }) {
+  const scripts = (widgetUrls.scripts || [])
+    .map((src) => `<script src="${escapeHtml(src)}" defer></script>`)
+    .join('\n');
+  if (spec.surface === 'clear') {
+    return [
+      '<!doctype html>',
+      '<html lang="en"><head><meta charset="utf-8"><meta name="robots" content="noindex, nofollow">',
+      '<title>Ready</title><link rel="stylesheet" href="/assets/site.css"><script src="/assets/page.js" defer></script></head>',
+      '<body><main><h1>Ready</h1><p id="continuation">Workflow may continue</p></main></body></html>',
+    ].join('\n');
+  }
+  if (spec.pageText) {
+    return [
+      '<!doctype html>',
+      '<html lang="en"><head><meta charset="utf-8"><meta name="robots" content="noindex, nofollow">',
+      `<title>Access notice</title><link rel="stylesheet" href="/assets/site.css"><script src="/assets/page.js" defer></script>${scripts}</head>`,
+      `<body><main><h1>${escapeHtml(spec.pageText)}</h1></main></body></html>`,
+    ].join('\n');
+  }
+  const frameSrc = (widgetUrls.frames || [])[0] || '';
+  if (spec.widget === 'passive') {
+    const width = spec.frameWidth || 200;
+    const height = spec.frameHeight || 60;
+    return [
+      '<!doctype html>',
+      '<html lang="en"><head><meta charset="utf-8"><meta name="robots" content="noindex, nofollow">',
+      `<title>Ready</title><link rel="stylesheet" href="/assets/site.css"><script src="/assets/page.js" defer></script>${scripts}</head>`,
+      `<body><main><h1>Ready</h1><p id="continuation">Workflow may continue</p><iframe class="oracle-passive-frame" title="Privacy badge" src="${escapeHtml(frameSrc)}" width="${width}" height="${height}"></iframe></main></body></html>`,
+    ].join('\n');
+  }
+  const width = spec.frameWidth || 540;
+  const height = spec.frameHeight || 660;
+  const completeUrl = `${origins.parent}/complete/${token}`;
+  return [
+    '<!doctype html>',
+    '<html lang="en"><head><meta charset="utf-8"><meta name="robots" content="noindex, nofollow">',
+    `<title>Verification</title><link rel="stylesheet" href="/assets/site.css"><script src="/assets/page.js" defer></script>${scripts}</head>`,
+    '<body><main>',
+    '  <h1>Verification</h1>',
+    `  <section id="scenario" data-oracle="true" data-verify="${escapeHtml(origins.verify)}" data-token="${escapeHtml(token)}" data-complete="${escapeHtml(completeUrl)}">`,
+    `    <iframe class="oracle-frame" title="Verification" src="${escapeHtml(frameSrc)}" width="${width}" height="${height}"></iframe>`,
+    '    <p id="page-status" role="status" aria-live="polite">Verification pending</p>',
+    '  </section>',
+    '</main></body></html>',
+  ].join('\n');
+}
+
+/**
+ * Render an interactive widget frame on the widget origin for an oracle run.
+ */
+export function renderOracleWidgetFrame({ origins, record, token }) {
+  const kind = record.widget;
+  if (kind === 'passive') {
+    return '<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Privacy badge</title></head><body><p>Privacy badge</p></body></html>';
+  }
+  const rootAttrs = `id="widget-root" data-verify="${escapeHtml(origins.verify)}" data-token="${escapeHtml(token)}" data-widget="${escapeHtml(kind)}"`;
+  let inner = '';
+  if (kind === 'spinner') {
+    inner = '<h2>Checking browser</h2><p>Checking your browser...</p><p class="status" role="status"></p>';
+  } else if (kind === 'grid3' || kind === 'grid4') {
+    const size = kind === 'grid4' ? 4 : 3;
+    const step = 480 / size;
+    const imgUrl = `/images/${record.provider_lane}/${token}/puzzle.svg`;
+    const tiles = [];
+    for (let i = 0; i < size * size; i += 1) {
+      const left = (i % size) * step;
+      const top = Math.floor(i / size) * step;
+      tiles.push(`<button type="button" class="tile" data-cell="${i}" aria-label="Tile ${i + 1}" style="left:${left}px;top:${top}px;width:${step}px;height:${step}px"></button>`);
+    }
+    inner = [
+      '<h2>Select all blue triangles</h2>',
+      `<div class="puzzle"><img src="${escapeHtml(imgUrl)}" alt="Selection puzzle" draggable="false">${tiles.join('')}</div>`,
+      '<button type="button" class="verify" data-target="verify">Verify selection</button>',
+      '<p class="status" role="status"></p>',
+    ].join('\n');
+  } else if (kind === 'slider') {
+    const imgUrl = `/images/${record.provider_lane}/${token}/puzzle.svg`;
+    inner = [
+      '<h2>Drag the purple handle onto the green target</h2>',
+      `<div class="puzzle"><img src="${escapeHtml(imgUrl)}" alt="Slider puzzle" draggable="false"><button type="button" class="handle" data-target="slider" aria-label="Drag handle"></button></div>`,
+      '<p class="status" role="status"></p>',
+    ].join('\n');
+  } else {
+    const target = kind === 'hold' ? 'hold' : 'checkbox';
+    const label = target === 'hold' ? 'Press and hold' : 'Click to verify';
+    inner = [
+      '<h2>Verification</h2>',
+      `<button type="button" class="${target}" data-target="${target}">${label}</button>`,
+      '<p class="status" role="status"></p>',
+    ].join('\n');
+  }
+  return [
+    '<!doctype html>',
+    '<html lang="en"><head><meta charset="utf-8"><meta name="robots" content="noindex, nofollow">',
+    '<title>Verification control</title><link rel="stylesheet" href="/assets/widget.css"><script src="/assets/widget.js" defer></script></head>',
+    `<body><div ${rootAttrs}>${inner}</div></body></html>`,
+  ].join('\n');
+}
+
+/**
+ * Render the post-settlement /complete/{token} continuation page on the parent origin.
+ */
+export function renderCompletePage({ recurUrl = null } = {}) {
+  const attr = recurUrl ? ` data-recur-url="${escapeHtml(recurUrl)}"` : '';
+  return [
+    '<!doctype html>',
+    '<html lang="en"><head><meta charset="utf-8"><meta name="robots" content="noindex, nofollow">',
+    '<title>Ready</title><link rel="stylesheet" href="/assets/site.css"><script src="/assets/page.js" defer></script></head>',
+    `<body><main><h1>Ready</h1><p id="continuation"${attr}>Workflow may continue</p></main></body></html>`,
+  ].join('\n');
 }
 
 /**

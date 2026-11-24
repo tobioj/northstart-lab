@@ -52,6 +52,7 @@ test('every script and adapter parses (catches CLI-only breakage the other tests
   const { fileURLToPath } = await import('node:url');
   const files = [
     ...readdirSync(new URL('../scripts/', import.meta.url)).filter((f) => f.endsWith('.js')).map((f) => `../scripts/${f}`),
+    '../functions/oracle.js', '../functions/netlify-blobs-store.js',
     '../deployment/adapters/vercel/api/northstar.js', '../deployment/adapters/cloudflare/worker.js',
     '../deployment/adapters/netlify/netlify/functions/northstar.mjs', '../netlify/functions/northstar.mjs', '../tests/harness/serve-harness.js',
   ];
