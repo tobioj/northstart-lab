@@ -21,7 +21,7 @@
 ## DNS (you)
 - [ ] `npm run plan -- ... --target <DNS_TARGET>` has been re-run so the plan carries the real target.
 - [ ] Three records have been created exactly as listed in `deployment/generated/<ROOT_DOMAIN>/dns-plan.md`, all with TTL 300.
-- [ ] `northstar-parent` is **Proxied**; `northstar-widget` and `northstar-verify` are DNS-only (unless the site is hosted on Cloudflare Workers).
+- [ ] All three records start **DNS only** so the platform can issue certificates (Cloudflare Workers: automatic, skip).
 - [ ] Cloudflare Bot Fight Mode is OFF, and the parent-host Configuration Rule is in place ([cloudflare-waf.md](cloudflare-waf.md) §1).
 
 ## Deploy (only after approval)
@@ -31,6 +31,7 @@
 - [ ] `npm run verify-deployment -- --env-file configuration/deploy.env --i-approve-external-requests` passes. It checks TLS on all three hosts, healthz/readyz, 404 for unknown paths, and the expected status for all 14 lanes.
 
 ## Cloudflare lane
+- [ ] After the platform shows the `northstar-parent` certificate as issued, that record is switched to **Proxied**.
 - [ ] The WAF rule has been created as a draft ([cloudflare-waf.md](cloudflare-waf.md)).
 - [ ] The rule is enabled only after the parent host's `/healthz` is confirmed through the proxy.
 - [ ] Verified: `/scenario/cloudflare` returns 403 with `cf-mitigated: challenge`, and no other lane is affected.

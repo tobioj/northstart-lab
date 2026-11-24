@@ -32,6 +32,7 @@ The filled-in version is in `deployment/generated/<ROOT_DOMAIN>/cloudflare-waf-r
 - The path test matches only `/scenario/cloudflare` and below. Every other scenario route, `/continue/…`, `/healthz`, `/.well-known/acme-challenge/…` and the assets are untouched.
 
 ## 3. Enable only after the host is confirmed
+0. Confirm the platform has issued the certificate for `northstar-parent` (the record was created DNS-only), then switch that record to **Proxied**.
 1. Check that `https://northstar-parent.<ROOT_DOMAIN>/healthz` returns `200` through the proxy. The response should include a `cf-ray` header.
 2. Turn the rule on.
 3. Open `https://northstar-parent.<ROOT_DOMAIN>/scenario/cloudflare`. It should now return **403** with `cf-mitigated: challenge`.

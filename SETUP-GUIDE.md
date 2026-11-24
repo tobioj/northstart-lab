@@ -106,10 +106,11 @@ In **Cloudflare → DNS → Records**, create the three records from `deployment
 
 | Name | Type | Target | TTL | Proxy |
 |---|---|---|---|---|
-| `northstar-parent` | CNAME | the platform target | 300 | **Proxied** (orange) |
+| `northstar-parent` | CNAME | the platform target | 300 | **DNS only for now** (switched to Proxied in Step 7) |
 | `northstar-widget` | CNAME | the platform target | 300 | DNS only (grey) |
 | `northstar-verify` | CNAME | the platform target | 300 | DNS only (grey) |
 
+- Create all three as **DNS only**: the platform can only issue their HTTPS certificates while Cloudflare is not proxying them.
 - Don't touch the root (`@`) or `www`. No wildcard records. Never add both an A record and a CNAME for one name.
 - Then add the parent-host **Configuration Rule** from `cloudflare-config-rule.txt`: SSL Full (strict), Email Obfuscation off, Rocket Loader off. See [deployment/cloudflare-waf.md](deployment/cloudflare-waf.md) §1.
 
@@ -133,6 +134,7 @@ Then I'll run (or you can run):
 **When:** only after Step 6 shows the parent host's `/healthz` = 200.
 
 Follow [deployment/cloudflare-waf.md](deployment/cloudflare-waf.md):
+0. Switch the `northstar-parent` DNS record to **Proxied** (orange cloud).
 1. Create the custom rule from `cloudflare-waf-rule.txt`. It matches the parent host **and** `/scenario/cloudflare` only. Choose **Save as Draft**.
 2. Enable it.
 3. Check that `/scenario/cloudflare` returns **403** with `cf-mitigated: challenge`, and that `verify-deployment` shows no other lane affected.

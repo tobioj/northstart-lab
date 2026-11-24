@@ -60,8 +60,10 @@ Exactly **three** records. All three point at the same hosting project; the app 
 ${platform === 'cloudflare' ? '\n> Platform is Cloudflare Workers: you do NOT create these records by hand. Adding each hostname as a Worker *Custom Domain* creates them (always proxied).\n' : ''}
 | Role | Hostname | Type | Name | Target | TTL | Cloudflare proxy |
 |---|---|---|---|---|---|---|
-${rows.map((r) => `| ${r.role} | ${r.host} | ${type} | ${r.name} | ${dnsTarget} | 300 | ${r.proxied ? 'Proxied (orange cloud)' : 'DNS only (grey cloud)'} |`).join('\n')}
-
+${rows.map((r) => `| ${r.role} | ${r.host} | ${type} | ${r.name} | ${dnsTarget} | 300 | ${platform === 'cloudflare' ? 'Proxied (automatic)' : r.proxied ? '**DNS only at first**, switch to Proxied in the Cloudflare-lane step' : 'DNS only (grey cloud)'} |`).join('\n')}
+${platform === 'cloudflare' ? '' : `
+**Order matters:** create all three as **DNS only** first. Vercel/Netlify can only issue each hostname's HTTPS certificate while Cloudflare is not proxying it. Switch \`${hosts.parent}\` to **Proxied** only after the platform shows its certificate as issued and \`https://${hosts.parent}/healthz\` works.
+`}
 Rules
 - TTL 300 seconds to start (raise to 3600 once stable).
 - Exactly one record per hostname: never an A record and a CNAME for the same name.
