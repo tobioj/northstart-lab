@@ -39,3 +39,48 @@ iframe.oracle-passive-frame { width: 200px; max-width: none; height: 60px; borde
 .widget { margin-top: 1.5rem; }
 body.frame { display: grid; place-items: center; min-height: 100vh; }
 body.frame p { margin: 0; color: var(--muted); font-size: .9rem; }
+.ns-mouse-cursor {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 22px;
+  height: 24px;
+  pointer-events: none;
+  z-index: 2147483647;
+  display: none;
+  filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.45));
+  transform-origin: 0 0;
+}
+.ns-mouse-cursor::before,
+.ns-mouse-cursor::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+}
+.ns-mouse-cursor::before {
+  background: #ffffff;
+  clip-path: polygon(0% 0%, 0% 88%, 24% 66%, 43% 100%, 58% 93%, 39% 60%, 74% 58%);
+}
+.ns-mouse-cursor::after {
+  background: #111111;
+  clip-path: polygon(9% 11%, 9% 76%, 26% 59%, 45% 91%, 52% 87%, 34% 54%, 62% 53%);
+}
+.ns-mouse-cursor.pressed {
+  transform: scale(0.9);
+}
+.ns-mouse-click {
+  position: fixed;
+  width: 26px;
+  height: 26px;
+  margin-left: -13px;
+  margin-top: -13px;
+  border-radius: 50%;
+  border: 2px solid rgba(17, 17, 17, 0.85);
+  pointer-events: none;
+  z-index: 2147483646;
+  animation: ns-mouse-pulse 0.32s ease-out forwards;
+}
+@keyframes ns-mouse-pulse {
+  0% { transform: scale(0.25); opacity: 0.95; }
+  100% { transform: scale(1.45); opacity: 0; }
+}

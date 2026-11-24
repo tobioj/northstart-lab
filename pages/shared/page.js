@@ -1,5 +1,39 @@
 (function () {
   'use strict';
+
+  function attachVisualCursor() {
+    if (!document.body || document.querySelector('.ns-mouse-cursor')) return;
+    var cursor = document.createElement('div');
+    cursor.className = 'ns-mouse-cursor';
+    cursor.setAttribute('aria-hidden', 'true');
+    document.body.appendChild(cursor);
+    function move(e) {
+      cursor.style.display = 'block';
+      cursor.style.left = e.clientX + 'px';
+      cursor.style.top = e.clientY + 'px';
+    }
+    document.addEventListener('pointermove', move, true);
+    document.addEventListener('pointerdown', function (e) {
+      move(e);
+      cursor.classList.add('pressed');
+      var ring = document.createElement('div');
+      ring.className = 'ns-mouse-click';
+      ring.style.left = e.clientX + 'px';
+      ring.style.top = e.clientY + 'px';
+      document.body.appendChild(ring);
+      setTimeout(function () { if (ring.parentNode) ring.parentNode.removeChild(ring); }, 350);
+    }, true);
+    document.addEventListener('pointerup', function () {
+      cursor.classList.remove('pressed');
+    }, true);
+    document.addEventListener('pointerleave', function () {
+      cursor.style.display = 'none';
+      cursor.classList.remove('pressed');
+    });
+  }
+  if (document.body) attachVisualCursor();
+  else document.addEventListener('DOMContentLoaded', attachVisualCursor, { once: true });
+
   var status = document.getElementById('page-status');
   function say(text) { if (status) status.textContent = text; }
 
